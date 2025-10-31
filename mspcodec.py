@@ -8,8 +8,9 @@ from typing import Dict, List, Optional, Iterable, Mapping, Any, Union
 import json
 import struct
 
-from msp_enum import MultiWii
+from lib import *
 
+# TODO: remove dependency on msp_enum.py and remove it; generate enum from msp_messages.json
 
 @dataclass(frozen=True)
 class _PayloadSide:
@@ -75,10 +76,7 @@ class MSPCodec:
 
     @classmethod
     def _parse_one(cls, name: str, node: Mapping[str, Any]) -> Optional[MessageSpec]:
-        try:
-            code = MultiWii(int(node["id"]))
-        except Exception:
-            return None  # ignore things not in your enum
+        code = MultiWii(int(node["code"]))
 
         req = cls._payload_side_from_dict(node.get("request"))
         rep = cls._payload_side_from_dict(node.get("reply"))

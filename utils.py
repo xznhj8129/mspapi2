@@ -1,5 +1,5 @@
 import json
-from msp_enum import *
+from lib.msp_enum import *
 
 class MSPlib:
     def __init__(self):

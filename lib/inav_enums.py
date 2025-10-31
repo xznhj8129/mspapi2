@@ -2509,7 +2509,6 @@ class InavEnums:
         SERVO_SINGLECOPTER_4 = 6
 
 
-
     # Source: telemetry/sim.h
     class simTxFlags_e(enum.IntEnum):
         SIM_TX_FLAG = (1 << 0)

@@ -21,9 +21,7 @@ from dataclasses import dataclass
 from queue import Queue, Empty
 from typing import Optional, Tuple, Callable, Dict, Deque, List
 from collections import deque
-from inav_defines import *
-from inav_enums import *
-from msp_enum import *
+from lib import *
 
 # ------------------------
 # Utilities / constants
