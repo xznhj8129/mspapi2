@@ -1,5 +1,7 @@
 import json
-from lib.msp_enum import *
+from mspcodec import MultiWii
+
+globals().update(MultiWii.__members__)
 
 class MSPlib:
     def __init__(self):

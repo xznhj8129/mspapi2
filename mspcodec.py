@@ -5,12 +5,38 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Iterable, Mapping, Any, Union
+import enum
 import json
 import struct
+from pathlib import Path
 
-from lib import *
+def _load_multiwii_enum(schema_path: Path) -> type[enum.IntEnum]:
+    try:
+        with schema_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"MultiWii schema not found: {schema_path}") from exc
 
-# TODO: remove dependency on msp_enum.py and remove it; generate enum from msp_messages.json
+    members: Dict[str, int] = {}
+    for name, node in data.items():
+        if not isinstance(name, str) or not name.isidentifier():
+            continue
+        code_raw = node.get("code") if isinstance(node, Mapping) else None
+        try:
+            code = int(code_raw)
+        except (TypeError, ValueError):
+            continue
+        if name in members:
+            continue
+        members[name] = code
+
+    if not members:
+        raise RuntimeError(f"No MSP messages found in {schema_path}")
+
+    return enum.IntEnum("MultiWii", members)
+
+
+MultiWii = _load_multiwii_enum(Path(__file__).with_name("lib") / "msp_messages.json")
 
 @dataclass(frozen=True)
 class _PayloadSide:
@@ -137,8 +163,6 @@ class MSPCodec:
         spec = self._get_spec(code)
         fmt = spec.reply.struct_fmt
         if fmt is None:
-            if payload not in (b"",):
-                raise ValueError(f"{spec.name}: reply expected empty payload, got {len(payload)} bytes")
             return {}
         size = struct.calcsize(fmt)
         if len(payload) != size:
@@ -174,4 +198,3 @@ class MSPCodec:
             return struct.pack(fmt, *ordered)
         except struct.error as e:
             raise ValueError(f"{spec.name}: pack_reply error: {e}")
-
