@@ -28,11 +28,10 @@ bin_type_map = {
     "boxBitmask_t": "Q",
 }
 
-"""TODO: rewrite codec api like hivelink, using enums class per message, ex: msp.MSP_WP(waypointIndex=1)
+"""TODO: rewrite codec api, no "messagespec" helpers, load messages as classes using enums class per message, ex: msp.MSP_WP(waypointIndex=1)
 example:
 encoding:
-
-mspMessage.MSP_messagename is implicit encode
+MSPCodec.MSP_messagename is implicit encode
 msg = mspMessage.MSP_SET_WP(
    waypointIndex=1, 
    action=InavEnums.navWaypointActions_e.NAV_WP_ACTION_WAYPOINT, 
@@ -48,7 +47,8 @@ msg.bytes is packed bytes
 
 decoding:
 (send MSP_WP request, receive response)
-msg = mspMessage.decode(received) msg is mspMessage class
+msg = MSPCodec.decode(received) 
+msg is mspMessage class
 msg.code is InavMSP.MSP_WP enum
 msg.action is InavEnums.navWaypointActions_e.NAV_WP_ACTION_WAYPOINT
 msg.waypointIndex is 1
