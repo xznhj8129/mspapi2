@@ -3900,7 +3900,7 @@
                     "name": "altitude",
                     "ctype": "int16_t",
                     "desc": "Altitude above MSL (`gpsSol.llh.alt / 100`)",
-                    "units": "meters"
+                    "units": "cm"
                 },
                 {
                     "name": "speed",

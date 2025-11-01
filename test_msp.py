@@ -5,24 +5,28 @@ import lib.boxes as boxes
 from mspcodec import MSPCodec
 from msp_serial import *
 codec = MSPCodec.from_json_file("lib/msp_messages.json")
-
-
-
-
 fc = MSPSerial("/dev/ttyACM0", 115200, read_timeout=0.05)
 fc.open()
+
+# NB: No x.get("var",0), if value is invalid or missing, it's a bug and must except, do not substitute
+# NB: in final payload presentation, always use same key names as payload if applicable
+# NB: in final payload presentation, convert integerized unit (ie: cm, deci-degrees) into float customary units (ie: m, degrees)
+# NB: do not "try except" enum gets, if value is missing it's a bug and must except
+
 try:
-    # Test MSP_API_VERSION
     print()
     code, payload = fc.request(InavMSP.MSP_API_VERSION)
     rep = codec.unpack_reply(code, payload)
     print("Got", InavMSP(code).name, rep)
+    # ex: {'mspProtocolVersion': 0, 'apiVersionMajor': 2, 'apiVersionMinor': 5}
 
-    # Test MSP_ATTITUDE
     print()
     code, payload = fc.request(InavMSP.MSP_ATTITUDE)
     rep = codec.unpack_reply(code, payload)
+    atti = {axis: rep.get(f"{axis}") / 10.0 for axis in ["roll","pitch","yaw"]}
     print("Got", InavMSP(code).name, rep)
+    print("Attitide:", atti)
+    # ex: {'roll': 68.9, 'pitch': 84.0, 'yaw': 4.8}
 
     print()
     code, payload = fc.request(InavMSP.MSP_FC_VARIANT)
@@ -34,6 +38,7 @@ try:
         variant = str(variant_raw)
     print("Got", InavMSP(code).name, rep)
     print("FC variant:", variant)
+    #ex: {'fcVariantIdentifier': b'INAV'}
 
     # TODO: Implement test for message: MSP_FC_VERSION
 
@@ -45,7 +50,6 @@ try:
 
     # TODO: Implement test for message: MSP_NAME
 
-    # Test MSP_SENSOR_CONFIG
     print()
     code, payload = fc.request(InavMSP.MSP_SENSOR_CONFIG)
     rep = codec.unpack_reply(code, payload)
@@ -62,36 +66,31 @@ try:
         raw_value = rep.get(field)
         if raw_value is None:
             continue
-        try:
-            sensor_config_summary[field] = enum_cls(raw_value).name
-        except ValueError:
-            sensor_config_summary[field] = f"UNKNOWN_{raw_value}"
+        sensor_config_summary[field] = enum_cls(raw_value)
     print("Got", InavMSP(code).name, rep)
     print("Sensor config summary:", sensor_config_summary)
+    # ex: {'accHardware': 'ACC_ICM42605', 'baroHardware': 'BARO_SPL06', 'magHardware': 'MAG_NONE', 'pitotHardware': 'PITOT_NONE', 'rangefinderHardware': 'RANGEFINDER_NONE', 'opflowHardware': 'OPFLOW_NONE'}
 
-    # Test MSP2_INAV_STATUS
     print()
     code, payload = fc.request(InavMSP.MSP2_INAV_STATUS)
     rep = codec.unpack_reply(code, payload)
-    armingflags = rep['armingFlags']
+    armingflags = rep.get('armingFlags')
     armingFlagsDecoded = [
         flag.name
         for flag in InavEnums.armingFlag_e
         if flag is not InavEnums.armingFlag_e.ARMING_DISABLED_ALL_FLAGS and (armingflags & flag.value)
     ]
     print("Got", InavMSP(code).name, rep)
+    #ex: {'cycleTime': 503, 'i2cErrors': 0, 'sensorStatus': 32899, 'cpuLoad': 11, 'profileAndBattProfile': 1, 'armingFlags': 297216, 'activeModes': 51606716424, 'mixerProfile': 1}
     print('Arming flags:',armingFlagsDecoded)
+    # ex: ['ARMING_DISABLED_NOT_LEVEL', 'ARMING_DISABLED_NAVIGATION_UNSAFE', 'ARMING_DISABLED_HARDWARE_FAILURE', 'ARMING_DISABLED_RC_LINK']
 
-    # Test MSP2_INAV_ANALOG
     print()
     code, payload = fc.request(InavMSP.MSP2_INAV_ANALOG)
     rep = codec.unpack_reply(code, payload)
-    battery_flags = rep.get("batteryFlags", 0)
+    battery_flags = rep.get("batteryFlags")
     battery_state_bits = (battery_flags >> 2) & 0x3
-    try:
-        battery_state = InavEnums.batteryState_e(battery_state_bits).name
-    except ValueError:
-        battery_state = f"UNKNOWN_{battery_state_bits}"
+    battery_state = InavEnums.batteryState_e(battery_state_bits)
     battery_flags_decoded = {
         "fullOnPlugIn": bool(battery_flags & 0x1),
         "useCapacityThreshold": bool(battery_flags & 0x2),
@@ -99,41 +98,42 @@ try:
         "cellCount": battery_flags >> 4,
     }
     analog_summary = {
-        "voltageV": rep.get("vbat", 0) / 100.0,
-        "currentA": rep.get("amperage", 0) / 100.0,
-        "powerW": rep.get("powerDraw", 0) / 1000.0,
-        "mAhDrawn": rep.get("mAhDrawn", 0),
-        "mWhDrawn": rep.get("mWhDrawn", 0),
-        "remainingCapacity": rep.get("remainingCapacity", 0),
-        "percentRemaining": rep.get("percentageRemaining", 0),
-        "rssi": rep.get("rssi", 0),
+        "vbat": rep.get("vbat") / 100.0,
+        "amperage": rep.get("amperage") / 100.0,
+        "powerDraw": rep.get("powerDraw") / 1000.0,
+        "mAhDrawn": rep.get("mAhDrawn"),
+        "mWhDrawn": rep.get("mWhDrawn"),
+        "remainingCapacity": rep.get("remainingCapacity"),
+        "percentRemaining": rep.get("percentageRemaining"),
+        "rssi": rep.get("rssi"),
     }
     print("Got", InavMSP(code).name, rep)
     print("Battery flags:", battery_flags_decoded)
+    # ex: {'fullOnPlugIn': False, 'useCapacityThreshold': False, 'state': 'BATTERY_NOT_PRESENT', 'cellCount': 0}
     print("Analog summary:", analog_summary)
+    # ex: {'vbat': 0.02, 'amperage': 13.6, 'powerDraw': 0.027, 'mAhDrawn': 54153, 'mWhDrawn': 1059, 'remainingCapacity': 0, 'percentRemaining': 0, 'rssi': 0}
 
     # TODO: Implement test for message: MSP_MOTOR
 
-    # Test MSP_ALTITUDE
     print()
     code, payload = fc.request(InavMSP.MSP_ALTITUDE)
     rep = codec.unpack_reply(code, payload)
     print("Got", InavMSP(code).name, rep)
+    # ex: {'estimatedAltitude': 0, 'variometer': 0, 'baroAltitude': -2969}
 
-    # Test MSP_RAW_IMU
     print()
     code, payload = fc.request(InavMSP.MSP_RAW_IMU)
     rep = codec.unpack_reply(code, payload)
     axes = ("X", "Y", "Z")
     imu_summary = {
-        "accelG": {axis: rep.get(f"acc{axis}", 0) / 512.0 for axis in axes},
-        "gyroDegPerSec": {axis: rep.get(f"gyro{axis}", 0) for axis in axes},
-        "magRaw": {axis: rep.get(f"mag{axis}", 0) for axis in axes},
+        "accelG": {axis: rep.get(f"acc{axis}") / 512.0 for axis in axes},
+        "gyroDPS": {axis: rep.get(f"gyro{axis}") for axis in axes},
+        "magRaw": {axis: rep.get(f"mag{axis}") for axis in axes},
     }
     print("Got", InavMSP(code).name, rep)
     print("IMU summary:", imu_summary)
+    # ex: {'accelG': {'X': -0.98046875, 'Y': 0.095703125, 'Z': 0.037109375}, 'gyroDPS': {'X': 0, 'Y': -1, 'Z': 0}, 'magRaw': {'X': 0, 'Y': 0, 'Z': 0}}
 
-    # Test MSP_MODE_RANGES
     print()
     code, payload = fc.request(InavMSP.MSP_MODE_RANGES)
     entry_struct = struct.Struct("<BBBB")
@@ -160,43 +160,37 @@ try:
     print("Got", InavMSP(code).name)
     for i in mode_ranges:
         print(i)
+    # ex: {'mode': 'ANGLE', 'auxChannelIndex': 1, 'pwmRange': (1300, 1700)} ...
 
-    # Test MSP_RC
     print()
     code, payload = fc.request(InavMSP.MSP_RC)
     channel_width = 2  
     channel_count = len(payload) // channel_width if payload else 0
     rc_channels = list(struct.unpack(f"<{channel_count}H", payload)) if channel_count else []
     print("Got", InavMSP(code).name, {"rcChannels": rc_channels})
+    #ex: {'rcChannels': [1500, 1500, 1500, 885, 1775, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500]}
 
-    # Test MSP_SET_RAW_RC
     print()
     target_rc_channels = rc_channels[:] if rc_channels else [1500, 1500, 1500, 1500]
     rc_payload = struct.pack(f"<{len(target_rc_channels)}H", *target_rc_channels)
     code, payload = fc.request(InavMSP.MSP_SET_RAW_RC, rc_payload)
     ack = codec.unpack_reply(code, payload)
     print("Got", InavMSP(code).name, {"rcChannels": target_rc_channels, "ack": ack})
+    #ex: {'rcChannels': [1500, 1500, 1500, 885, 1775, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500]}
 
-    # Test MSP2_INAV_BATTERY_CONFIG
     print()
     code, payload = fc.request(InavMSP.MSP2_INAV_BATTERY_CONFIG)
     rep = codec.unpack_reply(code, payload)
-    try:
-        vbat_source = InavEnums.batVoltageSource_e(rep.get("vbatSource", 0)).name
-    except ValueError:
-        vbat_source = f"UNKNOWN_{rep.get('vbatSource')}"
-    try:
-        capacity_unit = InavEnums.batCapacityUnit_e(rep.get("capacityUnit", 0)).name
-    except ValueError:
-        capacity_unit = f"UNKNOWN_{rep.get('capacityUnit')}"
+    vbat_source = InavEnums.batVoltageSource_e(rep.get("vbatSource"))
+    capacity_unit = InavEnums.batCapacityUnit_e(rep.get("capacityUnit"))
     voltage_keys = ("vbatCellDetect", "vbatMinCell", "vbatMaxCell", "vbatWarningCell")
-    cell_voltages = {key: rep.get(key, 0) / 100.0 for key in voltage_keys}
+    cell_voltages = {key: rep.get(key) / 100.0 for key in voltage_keys}
     battery_config_summary = {
         "vbatScale": rep.get("vbatScale"),
         "voltageSource": vbat_source,
         "cellCount": rep.get("cellCount"),
         "cellVoltagesV": cell_voltages,
-        "currentOffsetmV": rep.get("currentOffset"),
+        "currentOffset": rep.get("currentOffset"),
         "currentScale": rep.get("currentScale"),
         "capacityValue": rep.get("capacityValue"),
         "capacityWarning": rep.get("capacityWarning"),
@@ -205,56 +199,75 @@ try:
     }
     print("Got", InavMSP(code).name, rep)
     print("Battery config summary:", battery_config_summary)
+    # ex: {'rcChannels': [1500, 1500, 1500, 885, 1775, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500], 'ack': {}}
 
-    # Test MSP_GPSSTATISTICS
     print()
     code, payload = fc.request(InavMSP.MSP_GPSSTATISTICS)
     rep = codec.unpack_reply(code, payload)
     gps_stats_summary = {
-        "lastMessageSeconds": rep.get("lastMessageDt", 0) / 1000.0,
-        "errorRate": rep.get("errors", 0) / max(rep.get("packetCount", 1), 1),
-        "timeoutRate": rep.get("timeouts", 0) / max(rep.get("packetCount", 1), 1),
-        "hdop": rep.get("hdop", 0) / 100.0,
-        "horizontalAccM": rep.get("eph", 0) / 100.0,
-        "verticalAccM": rep.get("epv", 0) / 100.0,
+        "lastMessageSeconds": rep.get("lastMessageDt") / 1000.0,
+        "errorRate": rep.get("errors") / max(rep.get("packetCount", 1), 1),
+        "timeoutRate": rep.get("timeouts") / max(rep.get("packetCount", 1), 1),
+        "hdop": rep.get("hdop") / 100.0,
+        "horizontalAccM": rep.get("eph") / 100.0,
+        "verticalAccM": rep.get("epv") / 100.0,
     }
     print("Got", InavMSP(code).name, rep)
     print("GPS statistics summary:", gps_stats_summary)
+    # ex: {'vbatScale': 1100, 'voltageSource': 'BAT_VOLTAGE_RAW', 'cellCount': 0, 'cellVoltagesV': {'vbatCellDetect': 4.25, 'vbatMinCell': 3.3, 'vbatMaxCell': 4.2, 'vbatWarningCell': 3.5}, 'currentOffsetmV': 0, 'currentScale': 250, 'capacityValue': 0, 'capacityWarning': 0, 'capacityCritical': 0, 'capacityUnit': 'BAT_CAPACITY_UNIT_MAH'}
 
-    # Test MSP_NAV_STATUS
     print()
     code, payload = fc.request(InavMSP.MSP_NAV_STATUS)
     rep = codec.unpack_reply(code, payload)
-    def enum_name(enum_cls, value):
-        if value is None:
-            return None
-        try:
-            return enum_cls(value).name
-        except ValueError:
-            return f"UNKNOWN_{value}"
     nav_status_summary = {
-        "mode": enum_name(InavEnums.navSystemStatus_Mode_e, rep.get("navMode")),
-        "state": enum_name(InavEnums.navigationFSMState_t, rep.get("navState")),
+        "mode": InavEnums.navSystemStatus_Mode_e(rep.get("navMode")),
+        "state": InavEnums.navigationFSMState_t(rep.get("navState")),
         "activeWaypoint": {
-            "action": enum_name(InavEnums.navWaypointActions_e, rep.get("activeWpAction")),
+            "action": InavEnums.navWaypointActions_e(rep.get("activeWpAction")),
             "number": rep.get("activeWpNumber"),
         },
-        "error": enum_name(InavEnums.navSystemStatus_Error_e, rep.get("navError")),
+        "error": InavEnums.navSystemStatus_Error_e(rep.get("navError")),
         "targetHeadingDeg": rep.get("targetHeading"),
     }
     print("Got", InavMSP(code).name, rep)
     print("Navigation status summary:", nav_status_summary)
+    # ex: {'mode': 'MW_GPS_MODE_NONE', 'state': 'NAV_STATE_UNDEFINED', 'activeWaypoint': {'action': 'NAV_WP_ACTION_WAYPOINT', 'number': 1}, 'error': 'MW_NAV_ERROR_NONE', 'targetHeadingDeg': 353}
 
-    # TODO: Implement test for message: MSP_WP_GETINFO
+    print()
+    code, payload = fc.request(InavMSP.MSP_WP_GETINFO)
+    rep = codec.unpack_reply(code, payload)
+    mission_valid = bool(rep.get("missionValid"))
+    wp_info_summary = {
+        "wpCapabilities": rep.get("wpCapabilities"),
+        "maxWaypoints": rep.get("maxWaypoints"),
+        "missionValid": mission_valid,
+        "waypointCount": rep.get("waypointCount"),
+    }
+    if mission_valid:
+        wp_info_summary["waypointsRemaining"] = max(
+            (rep.get("maxWaypoints") or 0) - (rep.get("waypointCount") or 0), 0
+        )
+    print("Got", InavMSP(code).name, rep)
+    print("Waypoint info summary:", wp_info_summary)
+    # ex: {'capabilities': 0, 'maxWaypoints': 120, 'missionValid': False, 'waypointCount': 1}
 
-    # Test MSP_RAW_GPS
     print()
     code, payload = fc.request(InavMSP.MSP_RAW_GPS)
     rep = codec.unpack_reply(code, payload)
-    print("Got", InavMSP(code).name, rep)
-    print(rep)
+    raw_gps = {
+        "fixType": InavEnums.gpsFixType_e(rep.get('fixType')),
+        "numSat": rep.get("numSat"),
+        "latitude": rep.get('latitude') / 1e7,
+        "longitude": rep.get('longitude') / 1e7,
+        "altitude": rep.get('altitude') / 100.0,
+        "speed": rep.get('speed') / 100.0,
+        "groundCourse": rep.get('speed') / 10.0,
 
-    # Test MSP_SET_WP
+    }
+    print("Got", InavMSP(code).name, rep)
+    print(raw_gps)
+    # ex: {'fixType': 0, 'numSat': 0, 'latitude': 0, 'longitude': 0, 'altitude': 0, 'speed': 0, 'groundCourse': 0, 'hdop': 9999}
+
     print()
     packed = codec.pack_request(InavMSP.MSP_SET_WP, {
         'waypointIndex': 1, 
@@ -270,6 +283,7 @@ try:
     code, payload = fc.request(InavMSP.MSP_SET_WP, packed)
     rep = codec.unpack_reply(code, payload)
     print("Got", InavMSP(code).name, rep)
+    # ex: {'fixType': 0, 'numSat': 0, 'latitude': 0, 'longitude': 0, 'altitude': 0, 'speed': 0, 'groundCourse': 0, 'hdop': 9999}
 
     # Test MSP_WP
     print()
@@ -279,6 +293,7 @@ try:
     code, payload = fc.request(InavMSP.MSP_WP, packed)
     rep = codec.unpack_reply(code, payload)
     print("Got", InavMSP(code).name, rep)
+    # ex: {'waypointIndex': 1, 'action': 1, 'latitude': 12340000, 'longitude': 23450000, 'altitude': 1500, 'param1': 0, 'param2': 0, 'param3': 0, 'flag': 0}
 
 finally:
     fc.close()
