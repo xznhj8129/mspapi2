@@ -1,5 +1,5 @@
 # msp_codec.py
-# Minimal payload codec for MSP using MultiWii enum + msp_messages.json schema.
+# Minimal payload codec for MSP using InavMSP enum + msp_messages.json schema.
 # Focus: pack/unpack payloads ONLY (binary <-> Python values), no transport.
 
 from __future__ import annotations
@@ -28,12 +28,42 @@ bin_type_map = {
     "boxBitmask_t": "Q",
 }
 
+"""TODO: rewrite codec api like hivelink, using enums class per message, ex: msp.MSP_WP(waypointIndex=1)
+example:
+encoding:
+
+mspMessage.MSP_messagename is implicit encode
+msg = mspMessage.MSP_SET_WP(
+   waypointIndex=1, 
+   action=InavEnums.navWaypointActions_e.NAV_WP_ACTION_WAYPOINT, 
+   latitude=int(1.234e7), 
+   longitude=int(2.345e7),
+   altitude=1500, 
+   param1=0, 
+   param2=0, 
+   param3=0, 
+   flag=0 or InavEnums.navWaypointFlags_e.something
+msg.code is InavMSP.MSP_SET_WP enum
+msg.bytes is packed bytes
+
+decoding:
+(send MSP_WP request, receive response)
+msg = mspMessage.decode(received) msg is mspMessage class
+msg.code is InavMSP.MSP_WP enum
+msg.action is InavEnums.navWaypointActions_e.NAV_WP_ACTION_WAYPOINT
+msg.waypointIndex is 1
+msg.latitude is 12340000
+msg.param3 is 0 or InavEnums.navWaypointP3Flags_e.something
+etc
+
+"""
+
 def _load_multiwii_enum(schema_path: Path) -> type[enum.IntEnum]:
     try:
         with schema_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError as exc:
-        raise RuntimeError(f"MultiWii schema not found: {schema_path}") from exc
+        raise RuntimeError(f"InavMSP schema not found: {schema_path}") from exc
 
     members: Dict[str, int] = {}
     for name, node in data.items():
@@ -51,10 +81,10 @@ def _load_multiwii_enum(schema_path: Path) -> type[enum.IntEnum]:
     if not members:
         raise RuntimeError(f"No MSP messages found in {schema_path}")
 
-    return enum.IntEnum("MultiWii", members)
+    return enum.IntEnum("InavMSP", members)
 
 
-MultiWii = _load_multiwii_enum(Path(__file__).with_name("lib") / "msp_messages.json")
+InavMSP = _load_multiwii_enum(Path(__file__).with_name("lib") / "msp_messages.json")
 
 @dataclass(frozen=True)
 class _PayloadSide:
@@ -68,7 +98,7 @@ class _PayloadSide:
 
 @dataclass(frozen=True)
 class MessageSpec:
-    code: MultiWii
+    code: InavMSP
     name: str
     mspv: Optional[int]
     direction: Optional[int]
@@ -81,14 +111,14 @@ class MSPCodec:
     Tiny codec that uses a JSON schema to (un)pack MSP payloads.
 
     Public API:
-      - pack_request(code: MultiWii, values) -> bytes
-      - unpack_reply(code: MultiWii, payload: bytes) -> dict
+      - pack_request(code: InavMSP, values) -> bytes
+      - unpack_reply(code: InavMSP, payload: bytes) -> dict
 
     'values' can be:
       - sequence matching schema order, OR
       - mapping keyed by field names.
     """
-    def __init__(self, specs_by_code: Dict[MultiWii, MessageSpec]) -> None:
+    def __init__(self, specs_by_code: Dict[InavMSP, MessageSpec]) -> None:
         self._specs = specs_by_code
 
     # ----- Loaders -----
@@ -175,7 +205,7 @@ class MSPCodec:
 
     @classmethod
     def _parse_one(cls, name: str, node: Mapping[str, Any]) -> Optional[MessageSpec]:
-        code = MultiWii(int(node["code"]))
+        code = InavMSP(int(node["code"]))
 
         req = cls._payload_side_from_dict(node.get("request"))
         rep = cls._payload_side_from_dict(node.get("reply"))
@@ -190,8 +220,8 @@ class MSPCodec:
         )
 
     @classmethod
-    def _parse_schema(cls, obj: Mapping[str, Any]) -> Dict[MultiWii, MessageSpec]:
-        specs: Dict[MultiWii, MessageSpec] = {}
+    def _parse_schema(cls, obj: Mapping[str, Any]) -> Dict[InavMSP, MessageSpec]:
+        specs: Dict[InavMSP, MessageSpec] = {}
         for name, node in obj.items():
             if not isinstance(node, Mapping):
                 continue
@@ -202,7 +232,7 @@ class MSPCodec:
 
     # ----- Helpers -----
 
-    def _get_spec(self, code: MultiWii) -> MessageSpec:
+    def _get_spec(self, code: InavMSP) -> MessageSpec:
         try:
             return self._specs[code]
         except KeyError:
@@ -219,7 +249,7 @@ class MSPCodec:
 
     # ----- Public API -----
 
-    def pack_request(self, code: MultiWii, values: Union[Iterable[Any], Mapping[str, Any]] = ()) -> bytes:
+    def pack_request(self, code: InavMSP, values: Union[Iterable[Any], Mapping[str, Any]] = ()) -> bytes:
         spec = self._get_spec(code)
         fmt = spec.request.struct_fmt
         if fmt is None:
@@ -232,7 +262,7 @@ class MSPCodec:
         except struct.error as e:
             raise ValueError(f"{spec.name}: pack_request error: {e}")
 
-    def unpack_reply(self, code: MultiWii, payload: bytes) -> Dict[str, Any]:
+    def unpack_reply(self, code: InavMSP, payload: bytes) -> Dict[str, Any]:
         spec = self._get_spec(code)
         fmt = spec.reply.struct_fmt
         #if fmt is None:
@@ -252,7 +282,7 @@ class MSPCodec:
             return {}
 
     # why
-    def unpack_request(self, code: MultiWii, payload: bytes) -> Dict[str, Any]:
+    def unpack_request(self, code: InavMSP, payload: bytes) -> Dict[str, Any]:
         spec = self._get_spec(code)
         fmt = spec.request.struct_fmt
         if fmt is None:
@@ -264,7 +294,7 @@ class MSPCodec:
             raise ValueError(f"{spec.name}: request size {len(payload)} != expected {size}")
         return dict(zip(spec.request.field_names, struct.unpack(fmt, payload)))
 
-    def pack_reply(self, code: MultiWii, values: Union[Iterable[Any], Mapping[str, Any]] = ()) -> bytes:
+    def pack_reply(self, code: InavMSP, values: Union[Iterable[Any], Mapping[str, Any]] = ()) -> bytes:
         spec = self._get_spec(code)
         fmt = spec.reply.struct_fmt
         if fmt is None:

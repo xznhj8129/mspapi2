@@ -2030,6 +2030,7 @@
         "hex": "0x36",
         "mspv": 1,
         "direction": 1,
+        "implemented": false,
         "request": null,
         "reply": null,
         "variable_len": false,
@@ -2042,6 +2043,7 @@
         "hex": "0x37",
         "mspv": 1,
         "direction": 0,
+        "implemented": false,
         "request": null,
         "reply": null,
         "variable_len": false,
@@ -2630,6 +2632,7 @@
         "hex": "0x51",
         "mspv": 1,
         "direction": 0,
+        "implemented": false,
         "request": null,
         "reply": null,
         "variable_len": false,
@@ -2642,6 +2645,7 @@
         "hex": "0x52",
         "mspv": 1,
         "direction": 1,
+        "implemented": false,
         "request": null,
         "reply": null,
         "variable_len": false,
@@ -2654,6 +2658,7 @@
         "hex": "0x53",
         "mspv": 1,
         "direction": 0,
+        "implemented": false,
         "request": null,
         "reply": null,
         "variable_len": false,
@@ -2834,6 +2839,7 @@
         "hex": "0x56",
         "mspv": 1,
         "direction": 1,
+        "implemented": false,
         "request": null,
         "reply": null,
         "variable_len": false,
@@ -3558,37 +3564,43 @@
                     "name": "accHardware",
                     "ctype": "uint8_t",
                     "desc": "Sets `accelerometerConfigMutable()->acc_hardware",
-                    "units": ""
+                    "units": "",
+                    "enum": "accHardware_e"
                 },
                 {
                     "name": "baroHardware",
                     "ctype": "uint8_t",
                     "desc": "Sets `barometerConfigMutable()->baro_hardware` (if `USE_BARO`)",
-                    "units": ""
+                    "units": "",
+                    "enum": "baroHardware_e"
                 },
                 {
                     "name": "magHardware",
                     "ctype": "uint8_t",
                     "desc": "Sets `compassConfigMutable()->mag_hardware` (if `USE_MAG`)",
-                    "units": ""
+                    "units": "",
+                    "enum": "magHardware_e"
                 },
                 {
                     "name": "pitotHardware",
                     "ctype": "uint8_t",
                     "desc": "Sets `pitotmeterConfigMutable()->pitot_hardware` (if `USE_PITOT`)",
-                    "units": ""
+                    "units": "",
+                    "enum": "pitotHardware_e"
                 },
                 {
                     "name": "rangefinderHardware",
                     "ctype": "uint8_t",
                     "desc": "Sets `rangefinderConfigMutable()->rangefinder_hardware` (if `USE_RANGEFINDER`)",
-                    "units": ""
+                    "units": "",
+                    "enum": "rangefinderHardware_e"
                 },
                 {
                     "name": "opflowHardware",
                     "ctype": "uint8_t",
                     "desc": "Sets `opticalFlowConfigMutable()->opflow_hardware` (if `USE_OPFLOW`)",
-                    "units": ""
+                    "units": "",
+                    "enum": "opticalFlowHardware_e"
                 }
             ]
         },
@@ -3603,30 +3615,33 @@
         "hex": "0x62",
         "mspv": 1,
         "direction": 1,
+        "implemented": false,
         "request": null,
         "reply": null,
         "variable_len": false,
         "complex": false,
         "notes": "Not implemented in INAV `fc_msp.c`.",
-        "description": "Betaflight specific, likely unused/unimplemented in INAV."
+        "description": "Betaflight specific"
     },
     "MSP_SET_SPECIAL_PARAMETERS": {
         "code": 99,
         "hex": "0x63",
         "mspv": 1,
         "direction": 0,
+        "implemented": false,
         "request": null,
         "reply": null,
         "variable_len": false,
         "complex": false,
         "notes": "Not implemented in INAV `fc_msp.c`.",
-        "description": "Betaflight specific, likely unused/unimplemented in INAV."
+        "description": "Betaflight specific"
     },
     "MSP_IDENT": {
         "code": 100,
         "hex": "0x64",
         "mspv": 1,
         "direction": 1,
+        "implemented": false,
         "request": null,
         "reply": {
             "payload": [
@@ -5250,6 +5265,7 @@
         "hex": "0xcb",
         "mspv": 1,
         "direction": 0,
+        "implemented": false,
         "request": null,
         "reply": null,
         "variable_len": false,
@@ -5845,6 +5861,7 @@
         "hex": "0xef",
         "mspv": 1,
         "direction": 0,
+        "implemented": false,
         "request": null,
         "reply": null,
         "variable_len": false,
@@ -5857,6 +5874,7 @@
         "hex": "0xf0",
         "mspv": 1,
         "direction": 1,
+        "implemented": false,
         "request": null,
         "reply": null,
         "variable_len": false,

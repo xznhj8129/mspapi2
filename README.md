@@ -14,33 +14,19 @@ Clean rewrite of an API for MultiWii Serial Protocol for [BetaFlight](https://gi
 Will change quickly while i figure out cleanest way to seperate everything
 
 
-### bare minimum messages needed:
-* MSP_API_VERSION
-* MSP_FC_VARIANT
-* MSP_FC_VERSION
-* MSP_BUILD_INFO
-* MSP_BOARD_INFO
-* MSP_UID
-* MSP_NAME
-* MSP_STATUS
-* MSP_STATUS_EX
-* MSP_SENSOR_CONFIG
-* MSP_SENSOR_DATA
-* MSP_BATTERY_CONFIG
-* MSP_BATTERY_STATE
-* MSP_BOXIDS
-* MSP2_INAV_STATUS
-* MSP2_INAV_ANALOG
-* MSP_MOTOR
-* MSP_ATTITUDE
-* MSP_ALTITUDE
-* MSP_MODE_RANGES 
-* MSP_VOLTAGE_METER_CONFIG
-* MSP_RC
-* MSP_RC_OVERRIDE
-* MSP_RAW_GPS
-* MSP_GPSSTATISTICS
-* MSP_NAV_STATUS
-* MSP_WP
-* MSP_SET_WP
-* MSP_WP_GETINFO
+# Architecture:
+## MSP Handler
+* Single point of contact to FC and only serial socket handler
+* socket communication to API
+* packed bytes in -> serial req/resp -> packed bytes out
+* robust
+* will not block API
+
+## API
+* Message broker, handles multiple client connections
+* uses message queues to queue MSP message requests and responses
+* Programmable fixed interval message scheduler
+* Keeps timing and latency information per message
+* deduplicates messages (identical MSP message at same time will yield same response, hence send only once even if multiple clients request it)
+* does not block waiting for MSP handler response
+* Encodes/decodes MSP bytes from/to parsed data

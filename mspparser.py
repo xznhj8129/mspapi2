@@ -431,7 +431,7 @@ class MSPSerial:
         payload: bytes = b"",
         timeout: float = 1.0,
         force_version: Optional[int] = None,
-    ) -> Tuple[int, bytes, int]:
+    ) -> Tuple[int, bytes]:
         """
         Send a frame and wait for the matching response (same code coming FROM FC).
         Returns (code, payload, version). Raises TimeoutError on no response.
@@ -454,7 +454,7 @@ class MSPSerial:
                 raise TimeoutError(f"MSP request timeout for code {code}")
             # Safety: only accept FROM FC (direction is implicitly from parser)
             # Our parser pushes only complete frames; we match by code here.
-            return (msg.code, msg.payload, msg.version)
+            return (msg.code, msg.payload)
 
     # ---------- internals ----------
 

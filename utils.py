@@ -1,7 +1,7 @@
 import json
-from mspcodec import MultiWii
+from mspcodec import InavMSP
 
-globals().update(MultiWii.__members__)
+globals().update(InavMSP.__members__)
 
 class MSPlib:
     def __init__(self):
