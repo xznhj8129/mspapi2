@@ -10,6 +10,24 @@ import json
 import struct
 from pathlib import Path
 
+bin_type_map = {
+    "enum": "B",
+    "uint8_t": "B",
+    "uint16_t": "H",
+    "uint32_t": "I",
+    "uint64_t": "Q",
+    "int8_t": "b",
+    "int16_t": "h",
+    "int32_t": "i",
+    "int64_t": "q",
+    "float": "f",
+    "double": "d",
+    "char": "c",
+    "bool": "?",
+    "boolean": "?",  # normalize to bool
+    "boxBitmask_t": "Q",
+}
+
 def _load_multiwii_enum(schema_path: Path) -> type[enum.IntEnum]:
     try:
         with schema_path.open("r", encoding="utf-8") as f:
@@ -74,7 +92,6 @@ class MSPCodec:
         self._specs = specs_by_code
 
     # ----- Loaders -----
-
     @classmethod
     def from_json_file(cls, path: str) -> "MSPCodec":
         with open(path, "r", encoding="utf-8") as f:
@@ -91,13 +108,69 @@ class MSPCodec:
             return None
         return fmt if fmt and fmt[0] in "<>@=!" else "<" + fmt  # default little-endian
 
+    @staticmethod
+    def _struct_code_for_field(field: Mapping[str, Any]) -> Optional[str]:
+        ctype_val = field.get("ctype")
+        if not isinstance(ctype_val, str):
+            return None
+        ctype_val = ctype_val.strip()
+        if not ctype_val:
+            return None
+
+        direct = bin_type_map.get(ctype_val)
+        if direct:
+            return direct
+
+        if "[" in ctype_val and ctype_val.endswith("]"):
+            base, size_spec = ctype_val.split("[", 1)
+            base = base.strip()
+            size_spec = size_spec[:-1].strip()
+
+            size: Optional[int] = None
+            if size_spec and size_spec.isdigit():
+                size = int(size_spec)
+            else:
+                array_size = field.get("array_size")
+                if isinstance(array_size, int):
+                    size = array_size
+                elif isinstance(array_size, str) and array_size.isdigit():
+                    size = int(array_size)
+
+            if not size or size <= 0:
+                return None
+
+            if base == "char":
+                return f"{size}s"
+
+            base_code = bin_type_map.get(base)
+            if base_code:
+                return f"{size}{base_code}"
+            return None
+
+        return None
+
     @classmethod
     def _payload_side_from_dict(cls, side: Optional[Mapping[str, Any]]) -> _PayloadSide:
         if not side:
             return _PayloadSide(struct_fmt=None, field_names=[])
-        fmt = cls._normalize_fmt(side.get("struct"))
         fields_desc = side.get("payload") or []
         names = [fd.get("name", f"f{i}") for i, fd in enumerate(fields_desc)]
+        fmt_codes: List[str] = []
+        fmt_valid = True
+        for field in fields_desc:
+            code = cls._struct_code_for_field(field)
+            if code is None:
+                fmt_valid = False
+                break
+            fmt_codes.append(code)
+
+        if fmt_valid and fmt_codes:
+            fmt = "<" + "".join(fmt_codes)
+        elif fmt_valid:
+            fmt = None
+        else:
+            fmt = cls._normalize_fmt(side.get("struct"))
+
         return _PayloadSide(struct_fmt=fmt, field_names=names)
 
     @classmethod
@@ -162,18 +235,23 @@ class MSPCodec:
     def unpack_reply(self, code: MultiWii, payload: bytes) -> Dict[str, Any]:
         spec = self._get_spec(code)
         fmt = spec.reply.struct_fmt
-        if fmt is None:
+        #if fmt is None:
+            #if payload not in (b"",):
+            #    raise ValueError(f"{spec.name}: reply expected empty payload, got {len(payload)} bytes")
+            #return {}
+        #size = struct.calcsize(fmt)
+        #if len(payload) != size:
+        #    raise ValueError(f"{spec.name}: reply size {len(payload)} != expected {size}")
+        if len(payload)>0:
+            try:
+                values = struct.unpack(fmt, payload)
+            except struct.error as e:
+                raise ValueError(f"{spec.name}: unpack_reply error: {e}")
+            return dict(zip(spec.reply.field_names, values))
+        else:
             return {}
-        size = struct.calcsize(fmt)
-        if len(payload) != size:
-            raise ValueError(f"{spec.name}: reply size {len(payload)} != expected {size}")
-        try:
-            values = struct.unpack(fmt, payload)
-        except struct.error as e:
-            raise ValueError(f"{spec.name}: unpack_reply error: {e}")
-        return dict(zip(spec.reply.field_names, values))
 
-    # Optional extras if you ever need them:
+    # why
     def unpack_request(self, code: MultiWii, payload: bytes) -> Dict[str, Any]:
         spec = self._get_spec(code)
         fmt = spec.request.struct_fmt
