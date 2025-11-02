@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Iterable, Mapping, Any, Union
+from typing import Dict, List, Optional, Iterable, Mapping, Any, Union, Tuple
 import enum
 import json
 import struct
@@ -27,6 +27,13 @@ bin_type_map = {
     "boolean": "?",  # normalize to bool
     "boxBitmask_t": "Q",
 }
+
+
+class MSPResult(enum.IntEnum):
+    MSP_RESULT_ACK = 1
+    MSP_RESULT_ERROR = -1
+    MSP_RESULT_NO_REPLY = 0
+
 
 """TODO: rewrite codec api, no "messagespec" helpers, load messages as classes using enums class per message, ex: msp.MSP_WP(waypointIndex=1)
 example:
@@ -90,6 +97,8 @@ InavMSP = _load_multiwii_enum(Path(__file__).with_name("lib") / "msp_messages.js
 class _PayloadSide:
     struct_fmt: Optional[str]          # e.g. "<hhhhhhhhh" or None
     field_names: List[str]             # ordered to match struct fields
+    fields: Tuple[Mapping[str, Any], ...]  # raw field descriptors from schema
+    repeating: Optional[str]           # identifier of repeating group (if any)
 
     @property
     def size(self) -> Optional[int]:
@@ -182,7 +191,7 @@ class MSPCodec:
     @classmethod
     def _payload_side_from_dict(cls, side: Optional[Mapping[str, Any]]) -> _PayloadSide:
         if not side:
-            return _PayloadSide(struct_fmt=None, field_names=[])
+            return _PayloadSide(struct_fmt=None, field_names=[], fields=(), repeating=None)
         fields_desc = side.get("payload") or []
         names = [fd.get("name", f"f{i}") for i, fd in enumerate(fields_desc)]
         fmt_codes: List[str] = []
@@ -201,7 +210,9 @@ class MSPCodec:
         else:
             fmt = cls._normalize_fmt(side.get("struct"))
 
-        return _PayloadSide(struct_fmt=fmt, field_names=names)
+        repeating = side.get("repeating")
+
+        return _PayloadSide(struct_fmt=fmt, field_names=names, fields=tuple(fields_desc), repeating=repeating)
 
     @classmethod
     def _parse_one(cls, name: str, node: Mapping[str, Any]) -> Optional[MessageSpec]:
@@ -262,24 +273,26 @@ class MSPCodec:
         except struct.error as e:
             raise ValueError(f"{spec.name}: pack_request error: {e}")
 
-    def unpack_reply(self, code: InavMSP, payload: bytes) -> Dict[str, Any]:
+    def unpack_reply(self, code: InavMSP, payload: bytes) -> Any:
         spec = self._get_spec(code)
-        fmt = spec.reply.struct_fmt
-        #if fmt is None:
-            #if payload not in (b"",):
-            #    raise ValueError(f"{spec.name}: reply expected empty payload, got {len(payload)} bytes")
-            #return {}
-        #size = struct.calcsize(fmt)
-        #if len(payload) != size:
-        #    raise ValueError(f"{spec.name}: reply size {len(payload)} != expected {size}")
-        if len(payload)>0:
-            try:
-                values = struct.unpack(fmt, payload)
-            except struct.error as e:
-                raise ValueError(f"{spec.name}: unpack_reply error: {e}")
-            return dict(zip(spec.reply.field_names, values))
-        else:
-            return {}
+        side = spec.reply
+        fmt = side.struct_fmt
+
+        if side.repeating:
+            return self._decode_repeating_payload(spec.name, side, payload)
+
+        if fmt is None:
+            return self._decode_variable_payload(spec.name, side, payload)
+
+        expected_size = side.size
+        if expected_size is not None and len(payload) != expected_size:
+            raise ValueError(f"{spec.name}: reply size {len(payload)} != expected {expected_size}")
+
+        try:
+            values = struct.unpack(fmt, payload)
+        except struct.error as e:
+            raise ValueError(f"{spec.name}: unpack_reply error: {e}")
+        return dict(zip(side.field_names, values))
 
     # why
     def unpack_request(self, code: InavMSP, payload: bytes) -> Dict[str, Any]:
@@ -306,3 +319,175 @@ class MSPCodec:
             return struct.pack(fmt, *ordered)
         except struct.error as e:
             raise ValueError(f"{spec.name}: pack_reply error: {e}")
+
+    @staticmethod
+    def _decode_variable_payload(message_name: str, side: _PayloadSide, payload: bytes) -> Dict[str, Any]:
+        fields = side.fields
+        if not fields:
+            if payload not in (b"",):
+                raise ValueError(f"{message_name}: reply expected empty payload, got {len(payload)} bytes")
+            return {}
+
+        values, offset = MSPCodec._decode_field_sequence(message_name, fields, payload, 0)
+        if offset != len(payload):
+            raise ValueError(f"{message_name}: decoded {offset} of {len(payload)} payload bytes")
+        return values
+
+    @staticmethod
+    def _decode_repeating_payload(message_name: str, side: _PayloadSide, payload: bytes) -> List[Any]:
+        if not payload:
+            return []
+
+        if side.struct_fmt is not None:
+            entry_size = struct.calcsize(side.struct_fmt)
+            if entry_size <= 0:
+                raise ValueError(f"{message_name}: invalid repeating entry size {entry_size}")
+            if len(payload) % entry_size != 0:
+                raise ValueError(
+                    f"{message_name}: payload size {len(payload)} not aligned to repeating entry size {entry_size}"
+                )
+            entries: List[Dict[str, Any]] = []
+            for offset in range(0, len(payload), entry_size):
+                raw = struct.unpack_from(side.struct_fmt, payload, offset)
+                entries.append(dict(zip(side.field_names, raw)))
+            return entries
+
+        fields = side.fields
+        if not fields:
+            if payload not in (b"",):
+                raise ValueError(f"{message_name}: repeating payload has no schema but is non-empty")
+            return []
+
+        entries: List[Dict[str, Any]] = []
+        offset = 0
+        while offset < len(payload):
+            values, offset = MSPCodec._decode_field_sequence(message_name, fields, payload, offset)
+            entries.append(values)
+        if offset != len(payload):
+            raise ValueError(f"{message_name}: decoded {offset} of {len(payload)} payload bytes")
+        return entries
+
+    @staticmethod
+    def _decode_field_sequence(
+        message_name: str,
+        fields: Tuple[Mapping[str, Any], ...],
+        payload: bytes,
+        offset: int,
+    ) -> Tuple[Dict[str, Any], int]:
+        values: Dict[str, Any] = {}
+        current_offset = offset
+        for idx, field in enumerate(fields):
+            name, value, current_offset = MSPCodec._decode_single_field(
+                message_name, field, payload, current_offset, values, idx
+            )
+            values[name] = value
+        return values, current_offset
+
+    @staticmethod
+    def _decode_single_field(
+        message_name: str,
+        field: Mapping[str, Any],
+        payload: bytes,
+        offset: int,
+        parsed: Dict[str, Any],
+        index: int,
+    ) -> Tuple[str, Any, int]:
+        name = field.get("name") or f"f{index}"
+        total_len = len(payload)
+        if offset > total_len:
+            raise ValueError(f"{message_name}: field '{name}' offset {offset} exceeds payload size {total_len}")
+
+        is_array = bool(field.get("array")) or "[]" in str(field.get("ctype", ""))
+
+        if is_array:
+            base_ctype = field.get("array_ctype") or field.get("ctype", "")
+            if not base_ctype:
+                raise ValueError(f"{message_name}: array field '{name}' missing base type")
+            base_ctype = base_ctype.replace("[]", "").strip()
+            if base_ctype == "char":
+                elem_size = 1
+                base_code = None
+            else:
+                base_code = bin_type_map.get(base_ctype)
+                if not base_code:
+                    raise ValueError(f"{message_name}: unsupported array base type '{base_ctype}' for field '{name}'")
+                elem_size = struct.calcsize("<" + base_code)
+            count = field.get("array_size")
+            if isinstance(count, str) and count.isdigit():
+                count = int(count)
+            if isinstance(count, int) and count > 0:
+                length = count
+            else:
+                length = MSPCodec._resolve_dynamic_length(field, parsed)
+                if length is None:
+                    remaining = total_len - offset
+                    if elem_size == 0:
+                        raise ValueError(f"{message_name}: cannot determine element size for field '{name}'")
+                    if remaining % elem_size != 0:
+                        raise ValueError(
+                            f"{message_name}: remaining bytes {remaining} not aligned to element size {elem_size} for field '{name}'"
+                        )
+                    length = remaining // elem_size
+            total_bytes = elem_size * length
+            if offset + total_bytes > total_len:
+                raise ValueError(
+                    f"{message_name}: field '{name}' length {total_bytes} exceeds payload boundary ({offset} + {total_bytes} > {total_len})"
+                )
+            chunk = payload[offset:offset + total_bytes]
+            new_offset = offset + total_bytes
+            if base_ctype == "char":
+                value: Any = chunk
+            elif total_bytes == 0:
+                value = []
+            else:
+                fmt = "<" + base_code * length
+                value = list(struct.unpack(fmt, chunk))
+            return name, value, new_offset
+
+        struct_code = MSPCodec._struct_code_for_field(field)
+        if struct_code is None:
+            raise ValueError(f"{message_name}: unsupported field '{name}' without struct code")
+        fmt = MSPCodec._normalize_fmt(struct_code)
+        if fmt is None:
+            raise ValueError(f"{message_name}: unable to normalize format for field '{name}'")
+        size = struct.calcsize(fmt)
+        if offset + size > total_len:
+            raise ValueError(
+                f"{message_name}: field '{name}' size {size} exceeds payload boundary ({offset} + {size} > {total_len})"
+            )
+        raw = struct.unpack_from(fmt, payload, offset)
+        value = raw[0] if len(raw) == 1 else raw
+        new_offset = offset + size
+        return name, value, new_offset
+
+    @staticmethod
+    def _resolve_dynamic_length(field: Mapping[str, Any], parsed: Mapping[str, Any]) -> Optional[int]:
+        explicit = field.get("length_field") or field.get("lengthField") or field.get("lengthFrom")
+        if explicit:
+            length = parsed.get(explicit)
+            if length is not None:
+                try:
+                    return int(length)
+                except (TypeError, ValueError):
+                    pass
+
+        name = field.get("name") or ""
+        candidates: List[str] = []
+        if name:
+            candidates.extend([
+                f"{name}Length",
+                f"{name}Count",
+            ])
+            if name.endswith("s"):
+                singular = name[:-1]
+                candidates.extend([
+                    f"{singular}Length",
+                    f"{singular}Count",
+                ])
+        for candidate in candidates:
+            if candidate and candidate in parsed:
+                try:
+                    return int(parsed[candidate])
+                except (TypeError, ValueError):
+                    continue
+        return None

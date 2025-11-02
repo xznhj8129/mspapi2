@@ -1,5 +1,6 @@
 import struct
 import time
+from typing import Mapping
 from lib import *
 import lib.boxes as boxes
 from mspcodec import MSPCodec
@@ -8,6 +9,7 @@ codec = MSPCodec.from_json_file("lib/msp_messages.json")
 fc = MSPSerial("/dev/ttyACM0", 115200, read_timeout=0.05)
 fc.open()
 
+# IMPORTANT:
 # NB: No x.get("var",0), if value is invalid or missing, it's a bug and must except, do not substitute
 # NB: in final payload presentation, always use same key names as payload if applicable
 # NB: in final payload presentation, convert integerized unit (ie: cm, deci-degrees) into float customary units (ie: m, degrees)
@@ -26,11 +28,7 @@ try:
     rep = codec.unpack_reply(code, payload)
     print("Got", InavMSP(code).name, rep)
     #ex: {'fcVariantIdentifier': b'INAV'}
-    variant_raw = rep.get("fcVariantIdentifier", b"")
-    if isinstance(variant_raw, (bytes, bytearray)):
-        variant = variant_raw.rstrip(b"\x00").decode("ascii", errors="ignore")
-    else:
-        variant = str(variant_raw)
+    variant = rep.get("fcVariantIdentifier").rstrip(b"\x00").decode("ascii", errors="ignore")
     print("FC variant:", variant)
 
     # TODO: Implement test for message: MSP_FC_VERSION
@@ -39,20 +37,15 @@ try:
 
     print()
     code, payload = fc.request(InavMSP.MSP_BOARD_INFO)
-    header = struct.Struct("<4sHBBB")
-    board_id_raw, hardware_revision, osd_support, comm_capabilities, target_name_length = header.unpack_from(payload[:header.size])
-    target_name_bytes = payload[header.size:header.size + target_name_length]
-    rep = {
-        "boardIdentifier": board_id_raw,
-        "hardwareRevision": hardware_revision,
-        "osdSupport": osd_support,
-        "commCapabilities": comm_capabilities,
-        "targetNameLength": target_name_length,
-        "targetName": target_name_bytes,
-    }
+    rep = codec.unpack_reply(code, payload)
     print("Got", InavMSP(code).name, rep)
-    board_identifier = board_id_raw.rstrip(b"\x00").decode("ascii", errors="ignore")
-    target_name = target_name_bytes.rstrip(b"\x00").decode("ascii", errors="ignore")
+    board_identifier_raw = rep.get("boardIdentifier")
+    target_name_raw = rep.get("targetName")
+    comm_capabilities = rep.get("commCapabilities")
+    hardware_revision = rep.get("hardwareRevision")
+    osd_support = rep.get("osdSupport")
+    board_identifier = board_identifier_raw.rstrip(b"\x00").decode("ascii", errors="ignore")
+    target_name = target_name_raw.rstrip(b"\x00").decode("ascii", errors="ignore")
     comm_capabilities_summary = {
         "vcp": bool(comm_capabilities & 0x1),
         "softSerial": bool(comm_capabilities & 0x2),
@@ -93,29 +86,34 @@ try:
 
     print()
     code, payload = fc.request(InavMSP.MSP_BOXIDS)
-    box_ids = list(payload)
-    print("Got", InavMSP(code).name, {"boxIds": box_ids})
+    rep = codec.unpack_reply(code, payload)
+    box_ids = rep.get("boxIds")
+    box_index_map = {pid: idx for idx, pid in enumerate(box_ids)}
+    print("Got", InavMSP(code).name, rep)
     #Got MSP_BOXIDS {'boxIds': [0, 51, 61, 1, 2, 35, 5, 8, 6, 7, 32, 11, 10, 28, 53, 45, 30, 31, 55, 59, 46, 3, 13, 60, 19, 26, 27, 39, 40, 41, 42, 43, 44, 52, 62, 63, 65, 66, 67]}
 
     print()
     code, payload = fc.request(InavMSP.MSP_MODE_RANGES)
-    entry_struct = struct.Struct("<BBBB")
+    mode_entries = codec.unpack_reply(code, payload)
     min_pwm = InavDefines.CHANNEL_RANGE_MIN
     step_width = InavDefines.CHANNEL_RANGE_STEP_WIDTH
     mode_ranges = []
-    for offset in range(0, len(payload), entry_struct.size):
-        chunk = payload[offset:offset + entry_struct.size]
-        if len(chunk) < entry_struct.size:
-            break
-        mode_id, aux_index, start_step, end_step = entry_struct.unpack(chunk)
+
+    for entry in mode_entries:
+        mode_id = entry.get("modePermanentId")
+        aux_index = entry.get("auxChannelIndex")
+        start_step = entry.get("rangeStartStep")
+        end_step = entry.get("rangeEndStep")
+
         if mode_id == 0:
             continue
-        permanent_id = box_ids[mode_id] if 0 <= mode_id < len(box_ids) else None
-        mode_info = boxes.MODEBOXES.get(permanent_id) if permanent_id is not None else None
-        box_name = mode_info["boxName"] if mode_info else f"UNKNOWN_{permanent_id if permanent_id is not None else mode_id}"
+        permanent_id = mode_id
+        mode_info = boxes.MODEBOXES.get(permanent_id)
+        box_name = mode_info["boxName"] if mode_info else f"UNKNOWN_{permanent_id}"
+        box_index = box_index_map.get(permanent_id)
         mode_ranges.append({
             "mode": box_name,
-            "boxIndex": mode_id,
+            "boxIndex": box_index,
             "permanentId": permanent_id,
             "auxChannelIndex": aux_index,
             "pwmRange": (
@@ -144,7 +142,6 @@ try:
     ]
     print('Arming flags:',armingFlagsDecoded)
     # ex: ['ARMING_DISABLED_NOT_LEVEL', 'ARMING_DISABLED_NAVIGATION_UNSAFE', 'ARMING_DISABLED_HARDWARE_FAILURE', 'ARMING_DISABLED_RC_LINK']
-
     active_modes = []
     for idx, permanent_id in enumerate(box_ids):
         if not (activeModes & (1 << idx)):
@@ -157,8 +154,13 @@ try:
         })
     print('Active modes:', active_modes)
     # ex:  [{'boxIndex': 3, 'permanentId': 1, 'boxName': 'ANGLE'}, {'boxIndex': 26, 'permanentId': 27, 'boxName': 'FAILSAFE'}, {'boxIndex': 34, 'permanentId': 62, 'boxName': 'MIXER PROFILE 2'}, {'boxIndex': 35, 'permanentId': 63, 'boxName': 'MIXER TRANSITION'}]
-    exit(0)
-    # TODO: as with armingFlags, decode sensorStatus
+
+    sensorStatusDecoded = [
+        sensor
+        for sensor in InavEnums.sensors_e
+        if sensorStatus & sensor.value
+    ]
+    print('Sensor status:', sensorStatusDecoded)
 
     print()
     code, payload = fc.request(InavMSP.MSP2_INAV_ANALOG)
