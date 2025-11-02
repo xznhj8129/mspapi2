@@ -1684,6 +1684,7 @@ class InavEnums:
 
     # Source: navigation/navigation.h
     class navWaypointActions_e(enum.IntEnum):
+        NAV_WP_ACTION_NONE = 0x00
         NAV_WP_ACTION_WAYPOINT = 0x01
         NAV_WP_ACTION_HOLD_TIME = 0x03
         NAV_WP_ACTION_RTH = 0x04
