@@ -92,11 +92,51 @@ try:
     # ex: {'accHardware': 'ACC_ICM42605', 'baroHardware': 'BARO_SPL06', 'magHardware': 'MAG_NONE', 'pitotHardware': 'PITOT_NONE', 'rangefinderHardware': 'RANGEFINDER_NONE', 'opflowHardware': 'OPFLOW_NONE'}
 
     print()
+    code, payload = fc.request(InavMSP.MSP_BOXIDS)
+    box_ids = list(payload)
+    print("Got", InavMSP(code).name, {"boxIds": box_ids})
+    #Got MSP_BOXIDS {'boxIds': [0, 51, 61, 1, 2, 35, 5, 8, 6, 7, 32, 11, 10, 28, 53, 45, 30, 31, 55, 59, 46, 3, 13, 60, 19, 26, 27, 39, 40, 41, 42, 43, 44, 52, 62, 63, 65, 66, 67]}
+
+    print()
+    code, payload = fc.request(InavMSP.MSP_MODE_RANGES)
+    entry_struct = struct.Struct("<BBBB")
+    min_pwm = InavDefines.CHANNEL_RANGE_MIN
+    step_width = InavDefines.CHANNEL_RANGE_STEP_WIDTH
+    mode_ranges = []
+    for offset in range(0, len(payload), entry_struct.size):
+        chunk = payload[offset:offset + entry_struct.size]
+        if len(chunk) < entry_struct.size:
+            break
+        mode_id, aux_index, start_step, end_step = entry_struct.unpack(chunk)
+        if mode_id == 0:
+            continue
+        permanent_id = box_ids[mode_id] if 0 <= mode_id < len(box_ids) else None
+        mode_info = boxes.MODEBOXES.get(permanent_id) if permanent_id is not None else None
+        box_name = mode_info["boxName"] if mode_info else f"UNKNOWN_{permanent_id if permanent_id is not None else mode_id}"
+        mode_ranges.append({
+            "mode": box_name,
+            "boxIndex": mode_id,
+            "permanentId": permanent_id,
+            "auxChannelIndex": aux_index,
+            "pwmRange": (
+                min_pwm + start_step * step_width,
+                min_pwm + end_step * step_width,
+            ),
+        })
+    print("Got", InavMSP(code).name)
+    for i in mode_ranges:
+        print(i)
+    # ex: {'mode': 'ANGLE', 'auxChannelIndex': 1, 'pwmRange': (1300, 1700)} ...
+
+    print()
     code, payload = fc.request(InavMSP.MSP2_INAV_STATUS)
     rep = codec.unpack_reply(code, payload)
     print("Got", InavMSP(code).name, rep)
     #ex: {'cycleTime': 503, 'i2cErrors': 0, 'sensorStatus': 32899, 'cpuLoad': 11, 'profileAndBattProfile': 1, 'armingFlags': 297216, 'activeModes': 51606716424, 'mixerProfile': 1}
+    activeModes = rep['activeModes']
+    sensorStatus = rep['sensorStatus']
     armingflags = rep.get('armingFlags')
+
     armingFlagsDecoded = [
         flag.name
         for flag in InavEnums.armingFlag_e
@@ -104,6 +144,21 @@ try:
     ]
     print('Arming flags:',armingFlagsDecoded)
     # ex: ['ARMING_DISABLED_NOT_LEVEL', 'ARMING_DISABLED_NAVIGATION_UNSAFE', 'ARMING_DISABLED_HARDWARE_FAILURE', 'ARMING_DISABLED_RC_LINK']
+
+    active_modes = []
+    for idx, permanent_id in enumerate(box_ids):
+        if not (activeModes & (1 << idx)):
+            continue
+        mode_info = boxes.MODEBOXES.get(permanent_id, {})
+        active_modes.append({
+            "boxIndex": idx,
+            "permanentId": permanent_id,
+            "boxName": mode_info.get("boxName", f"UNKNOWN_{permanent_id}"),
+        })
+    print('Active modes:', active_modes)
+    # ex:  [{'boxIndex': 3, 'permanentId': 1, 'boxName': 'ANGLE'}, {'boxIndex': 26, 'permanentId': 27, 'boxName': 'FAILSAFE'}, {'boxIndex': 34, 'permanentId': 62, 'boxName': 'MIXER PROFILE 2'}, {'boxIndex': 35, 'permanentId': 63, 'boxName': 'MIXER TRANSITION'}]
+    exit(0)
+    # TODO: as with armingFlags, decode sensorStatus
 
     print()
     code, payload = fc.request(InavMSP.MSP2_INAV_ANALOG)
@@ -163,34 +218,6 @@ try:
     }
     print("IMU summary:", imu_summary)
     # ex: {'accelG': {'X': -0.98046875, 'Y': 0.095703125, 'Z': 0.037109375}, 'gyroDPS': {'X': 0, 'Y': -1, 'Z': 0}, 'magRaw': {'X': 0, 'Y': 0, 'Z': 0}}
-
-    print()
-    code, payload = fc.request(InavMSP.MSP_MODE_RANGES)
-    entry_struct = struct.Struct("<BBBB")
-    min_pwm = InavDefines.CHANNEL_RANGE_MIN
-    step_width = InavDefines.CHANNEL_RANGE_STEP_WIDTH
-    mode_ranges = []
-    for offset in range(0, len(payload), entry_struct.size):
-        chunk = payload[offset:offset + entry_struct.size]
-        if len(chunk) < entry_struct.size:
-            break
-        mode_id, aux_index, start_step, end_step = entry_struct.unpack(chunk)
-        if mode_id == 0:
-            continue
-        mode_info = boxes.MODEBOXES.get(mode_id)
-        box_name = mode_info["boxName"] if mode_info else f"UNKNOWN_{mode_id}"
-        mode_ranges.append({
-            "mode": box_name,
-            "auxChannelIndex": aux_index,
-            "pwmRange": (
-                min_pwm + start_step * step_width,
-                min_pwm + end_step * step_width,
-            ),
-        })
-    print("Got", InavMSP(code).name)
-    for i in mode_ranges:
-        print(i)
-    # ex: {'mode': 'ANGLE', 'auxChannelIndex': 1, 'pwmRange': (1300, 1700)} ...
 
     print()
     code, payload = fc.request(InavMSP.MSP_RC)
