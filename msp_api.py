@@ -234,6 +234,34 @@ class MSPApi:
             "receiverType": InavEnums.rxReceiverType_e(rep["receiverType"]),
         }
 
+    def get_logic_conditions(self) -> List[Dict[str, Any]]:
+        reps = self._request_unpack(InavMSP.MSP2_INAV_LOGIC_CONDITIONS)
+        if isinstance(reps, Mapping):
+            reps = [reps]  # defensive; schema should yield list
+        conditions: List[Dict[str, Any]] = []
+        for entry in reps or []:
+            flags_raw = entry["flags"]
+            conditions.append(
+                {
+                    "enabled": bool(entry["enabled"]),
+                    "activatorId": None if entry["activatorId"] == 0xFF else entry["activatorId"],
+                    "operation": InavEnums.logicOperation_e(entry["operation"]),
+                    "operandAType": InavEnums.logicOperandType_e(entry["operandAType"]),
+                    "operandAValue": entry["operandAValue"],
+                    "operandBType": InavEnums.logicOperandType_e(entry["operandBType"]),
+                    "operandBValue": entry["operandBValue"],
+                    "flags": {
+                        "raw": flags_raw,
+                        "decoded": [
+                            flag
+                            for flag in InavEnums.logicConditionFlags_e
+                            if flags_raw & flag.value
+                        ],
+                    },
+                }
+            )
+        return conditions
+
     def get_attitude(self) -> Dict[str, float]:
         rep = self._request_unpack(InavMSP.MSP_ATTITUDE)
         return {axis: rep[axis] / 10.0 for axis in ("roll", "pitch", "yaw")}

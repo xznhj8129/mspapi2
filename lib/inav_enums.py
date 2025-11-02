@@ -1243,6 +1243,19 @@ class InavEnums:
 
 
     # Source: programming/logic_condition.h
+    class logicOperandType_e(enum.IntEnum):
+        LOGIC_CONDITION_OPERAND_TYPE_VALUE = 0
+        LOGIC_CONDITION_OPERAND_TYPE_RC_CHANNEL = 1
+        LOGIC_CONDITION_OPERAND_TYPE_FLIGHT = 2
+        LOGIC_CONDITION_OPERAND_TYPE_FLIGHT_MODE = 3
+        LOGIC_CONDITION_OPERAND_TYPE_LC = 4
+        LOGIC_CONDITION_OPERAND_TYPE_GVAR = 5
+        LOGIC_CONDITION_OPERAND_TYPE_PID = 6
+        LOGIC_CONDITION_OPERAND_TYPE_WAYPOINTS = 7
+        LOGIC_CONDITION_OPERAND_TYPE_LAST = 8
+
+
+    # Source: programming/logic_condition.h
     class logicFlightOperands_e(enum.IntEnum):
         LOGIC_CONDITION_OPERAND_FLIGHT_ARM_TIMER = 0
         LOGIC_CONDITION_OPERAND_FLIGHT_HOME_DISTANCE = 1

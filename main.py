@@ -35,6 +35,12 @@ def main() -> None:
         print("RX config:", api.get_rx_config())
 
         print()
+        print("Logic conditions:")
+        for condition in api.get_logic_conditions():
+            if condition["enabled"]:
+                print(condition)
+
+        print()
         print("Attitude:", api.get_attitude())
 
         print()

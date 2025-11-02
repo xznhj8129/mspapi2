@@ -213,6 +213,32 @@ try:
     }
     print("RX config:", rx_config)
 
+    print()
+    code, payload = fc.request(InavMSP.MSP2_INAV_LOGIC_CONDITIONS)
+    reps = codec.unpack_reply(code, payload)
+    print("Got", InavMSP(code).name)
+    logic_conditions = []
+    for entry in reps or []:
+        flags_raw = entry["flags"]
+        logic_conditions.append({
+            "enabled": bool(entry["enabled"]),
+            "activatorId": None if entry["activatorId"] == 0xFF else entry["activatorId"],
+            "operation": InavEnums.logicOperation_e(entry["operation"]),
+            "operandAType": InavEnums.logicOperandType_e(entry["operandAType"]),
+            "operandAValue": entry["operandAValue"],
+            "operandBType": InavEnums.logicOperandType_e(entry["operandBType"]),
+            "operandBValue": entry["operandBValue"],
+            "flags": [
+                flag
+                for flag in InavEnums.logicConditionFlags_e
+                if flags_raw & flag.value
+            ],
+        })
+    print("Logic conditions:")
+    for lc in logic_conditions:
+        if lc["enabled"]:
+            print(lc)
+
     # TODO: Implement test for message: MSP_MOTOR
 
     print()
