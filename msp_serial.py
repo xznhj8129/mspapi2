@@ -302,11 +302,11 @@ class _MSPParser:
 
 
 # ------------------------
-# Serial transport
+# Serial / socket transport
 # ------------------------
 class MSPSerial:
     """
-    MSP transport over a serial port:
+    MSP transport over a serial port or TCP socket:
       - open()/close()
       - send(code, payload=b'', force_version=None)
       - request(code, payload=b'', timeout=1.0, force_version=None) -> (code, payload, version)
@@ -322,9 +322,10 @@ class MSPSerial:
         write_timeout: float = 0.2,
         min_gap_s: float = 0.005,
         rx_queue_size: int = 1024,
+        tcp: bool = False,
     ) -> None:
         """
-        port: serial device path e.g. '/dev/ttyACM0'
+        port: serial device path (e.g. '/dev/ttyACM0') or host:port for TCP when tcp=True
         min_gap_s: minimum spacing between writes to avoid FC overload
         """
         self.port = port
@@ -332,8 +333,9 @@ class MSPSerial:
         self.read_timeout = read_timeout
         self.write_timeout = write_timeout
         self.min_gap_s = max(0.0, float(min_gap_s))
+        self._use_tcp = tcp
 
-        self._ser: Optional[serial.Serial] = None
+        self._ser: Optional[serial.SerialBase] = None  # type: ignore[attr-defined]
         self._rx_thread: Optional[threading.Thread] = None
         self._stop_evt = threading.Event()
 
@@ -357,21 +359,39 @@ class MSPSerial:
     def open(self) -> None:
         if self._ser and self._ser.is_open:
             return
-        self._ser = serial.Serial(
-            port=self.port,
-            baudrate=self.baudrate,
-            timeout=self.read_timeout,
-            write_timeout=self.write_timeout,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            xonxoff=False,
-            rtscts=False,
-            dsrdtr=False,
-        )
+        if self._use_tcp:
+            url = self.port
+            if "://" not in url:
+                url = f"socket://{url}"
+            self._ser = serial.serial_for_url(  # type: ignore[attr-defined]
+                url,
+                timeout=self.read_timeout,
+                write_timeout=self.write_timeout,
+            )
+        else:
+            self._ser = serial.Serial(
+                port=self.port,
+                baudrate=self.baudrate,
+                timeout=self.read_timeout,
+                write_timeout=self.write_timeout,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                xonxoff=False,
+                rtscts=False,
+                dsrdtr=False,
+            )
         # Clear buffers
-        self._ser.reset_input_buffer()
-        self._ser.reset_output_buffer()
+        if hasattr(self._ser, "reset_input_buffer"):
+            try:
+                self._ser.reset_input_buffer()
+            except Exception:
+                pass
+        if hasattr(self._ser, "reset_output_buffer"):
+            try:
+                self._ser.reset_output_buffer()
+            except Exception:
+                pass
 
         # Start reader thread
         self._stop_evt.clear()
@@ -569,4 +589,3 @@ class MSPSerial:
 
         else:
             raise ValueError("version must be 1 or 2")
-

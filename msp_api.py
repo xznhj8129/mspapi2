@@ -20,17 +20,25 @@ class MSPApi:
 
     def __init__(
         self,
-        port: str,
+        port: Optional[str] = "/dev/ttyACM0",
         baudrate: int = 115200,
         *,
         read_timeout: float = 0.05,
         write_timeout: float = 0.25,
         codec_path: Optional[Path] = None,
+        tcp_endpoint: Optional[str] = None,
     ) -> None:
         schema_path = codec_path or Path(__file__).with_name("lib") / "msp_messages.json"
         self._codec = MSPCodec.from_json_file(str(schema_path))
-        self._serial = MSPSerial(port, baudrate, read_timeout=read_timeout)
-        self._serial.write_timeout = write_timeout
+        endpoint = tcp_endpoint.strip() if tcp_endpoint else None
+        if endpoint:
+            if ":" not in endpoint:
+                raise ValueError("tcp_endpoint must be in HOST:PORT format")
+            self._serial = MSPSerial(endpoint, baudrate, read_timeout=read_timeout, write_timeout=write_timeout, tcp=True)
+        else:
+            if not port:
+                raise ValueError("Serial port must be provided when tcp_endpoint is not set")
+            self._serial = MSPSerial(port, baudrate, read_timeout=read_timeout, write_timeout=write_timeout)
 
     def open(self) -> None:
         self._serial.open()

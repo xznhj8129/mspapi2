@@ -1,11 +1,31 @@
 from __future__ import annotations
 
+import argparse
+
 from lib import InavEnums
 from msp_api import MSPApi
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="MSP API demo")
+    parser.add_argument("--port", default="/dev/ttyACM0", help="Serial device path (ignored if --tcp is used)")
+    parser.add_argument("--baudrate", type=int, default=115200, help="Serial baud rate")
+    parser.add_argument("--tcp", metavar="HOST:PORT", help="Connect using TCP socket instead of serial, e.g. localhost:5760")
+    parser.add_argument("--read-timeout", type=float, default=0.05, help="Read timeout in seconds")
+    parser.add_argument("--write-timeout", type=float, default=0.25, help="Write timeout in seconds")
+    return parser.parse_args()
+
+
 def main() -> None:
-    with MSPApi("/dev/ttyACM0", 115200, read_timeout=0.05) as api:
+    args = parse_args()
+    port = None if args.tcp else args.port
+    with MSPApi(
+        port=port,
+        baudrate=args.baudrate,
+        read_timeout=args.read_timeout,
+        write_timeout=args.write_timeout,
+        tcp_endpoint=args.tcp,
+    ) as api:
         print()
         print("MSP API version:", api.get_api_version())
 
