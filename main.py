@@ -1,8 +1,83 @@
-# TODO: use tests in test_msp as basis for functions to implement API class in msp_api.py with high level functions that do the job of parsing the raw data from the MSP packet, or converting the user's data into the right format for MSP; and demonstrate them here. API must only ever use the same serial socket object. 
-# IMPORTANT:
-# * No x.get("var",0), if value is invalid or missing, it's a bug and must except, do not substitute
-# * in final payload presentation, always use same key names as payload if applicable
-# * in final payload presentation, convert integerized unit (ie: cm, deci-degrees) into float customary units (ie: m, degrees)
-# * do not "try except" enum gets, if value is missing it's a bug and must except
-# * return raw enum type, not pure value/str: vbat_source = InavEnums.batVoltageSource_e(rep.get("vbatSource"))
-# When working, run main.py or test_msp.py as needed, everything is already connected.
+from __future__ import annotations
+
+from lib import InavEnums
+from msp_api import MSPApi
+
+
+def main() -> None:
+    with MSPApi("/dev/ttyACM0", 115200, read_timeout=0.05) as api:
+        print()
+        print("MSP API version:", api.get_api_version())
+
+        print()
+        print("Flight controller variant:", api.get_fc_variant())
+
+        print()
+        print("Board info:", api.get_board_info())
+
+        print()
+        print("Sensor configuration:", api.get_sensor_config())
+
+        print()
+        print("Mode ranges:")
+        for entry in api.get_mode_ranges():
+            print(entry)
+
+        print()
+        status = api.get_inav_status()
+        print("INAV status:", status)
+
+        print()
+        analog = api.get_inav_analog()
+        print("Analog readings:", analog)
+
+        print()
+        print("RX config:", api.get_rx_config())
+
+        print()
+        print("Attitude:", api.get_attitude())
+
+        print()
+        print("Altitude:", api.get_altitude())
+
+        print()
+        print("IMU summary:", api.get_imu())
+
+        print()
+        rc_channels = api.get_rc_channels()
+        print("RC channels:", rc_channels)
+        target_channels = rc_channels[:] if rc_channels else [1500, 1500, 1500, 1500]
+        ack = api.set_rc_channels(target_channels)
+        print("SET_RAW_RC ack:", ack)
+
+        print()
+        print("Battery config:", api.get_battery_config())
+
+        print()
+        print("GPS statistics:", api.get_gps_statistics())
+
+        print()
+        print("Waypoint info:", api.get_waypoint_info())
+
+        print()
+        print("Raw GPS:", api.get_raw_gps())
+
+        print()
+        set_wp_ack = api.set_waypoint(
+            waypointIndex=1,
+            action=InavEnums.navWaypointActions_e.NAV_WP_ACTION_WAYPOINT,
+            latitude=1.234,
+            longitude=2.345,
+            altitude=15.0,
+        )
+        print("SET_WP ack:", set_wp_ack)
+
+        print()
+        print("Waypoint:", api.get_waypoint(1))
+
+        print()
+        print("Navigation status:", api.get_nav_status())
+
+
+if __name__ == "__main__":
+    main()

@@ -190,6 +190,29 @@ try:
     print("Analog summary:", analog_summary)
     # ex: {'vbat': 0.02, 'amperage': 13.6, 'powerDraw': 0.027, 'mAhDrawn': 54153, 'mWhDrawn': 1059, 'remainingCapacity': 0, 'percentRemaining': 0, 'rssi': 0}
 
+    print()
+    code, payload = fc.request(InavMSP.MSP_RX_CONFIG)
+    rep = codec.unpack_reply(code, payload)
+    print("Got", InavMSP(code).name, rep)
+    rx_config = {
+        "serialRxProvider": InavEnums.rxSerialReceiverType_e(rep["serialRxProvider"]),
+        "maxCheck": rep["maxCheck"],
+        "midRc": rep["midRc"],
+        "minCheck": rep["minCheck"],
+        "spektrumSatBind": rep["spektrumSatBind"],
+        "rxMinUsec": rep["rxMinUsec"],
+        "rxMaxUsec": rep["rxMaxUsec"],
+        "bfCompatRcInterpolation": rep["bfCompatRcInterpolation"],
+        "bfCompatRcInterpolationInt": rep["bfCompatRcInterpolationInt"],
+        "bfCompatAirModeThreshold": rep["bfCompatAirModeThreshold"],
+        "reserved1": rep["reserved1"],
+        "reserved2": rep["reserved2"],
+        "reserved3": rep["reserved3"],
+        "bfCompatFpvCamAngle": rep["bfCompatFpvCamAngle"],
+        "receiverType": InavEnums.rxReceiverType_e(rep["receiverType"]),
+    }
+    print("RX config:", rx_config)
+
     # TODO: Implement test for message: MSP_MOTOR
 
     print()
@@ -354,6 +377,7 @@ try:
     print("Navigation status summary:", nav_status_summary)
     # ex: {'mode': 'MW_GPS_MODE_NONE', 'state': 'NAV_STATE_UNDEFINED', 'activeWaypoint': {'action': 'NAV_WP_ACTION_WAYPOINT', 'number': 1}, 'error': 'MW_NAV_ERROR_NONE', 'targetHeadingDeg': 353}
 
+    #TODO: test MSP_RX_CONFIG
 
 finally:
     fc.close()

@@ -15,18 +15,23 @@ Will change quickly while i figure out cleanest way to seperate everything
 
 
 # Architecture:
-## MSP Handler
+## MSP Handler (msp_serial.py)
 * Single point of contact to FC and only serial socket handler
 * socket communication to API
 * packed bytes in -> serial req/resp -> packed bytes out
 * robust
 * will not block API
 
-## API
+## API (msp_api.py)
+* Encodes/decodes MSP bytes from/to parsed data
 * Message broker, handles multiple client connections
 * uses message queues to queue MSP message requests and responses
 * Programmable fixed interval message scheduler
 * Keeps timing and latency information per message
 * deduplicates messages (identical MSP message at same time will yield same response, hence send only once even if multiple clients request it)
 * does not block waiting for MSP handler response
-* Encodes/decodes MSP bytes from/to parsed data
+
+## Client-API connection
+* Client sends message and checks 
+* JSON packet {"code":int, "payload":{}, "time":int, "client":str} to msgpack
+* sent to TCP socket

@@ -35,36 +35,6 @@ class MSPResult(enum.IntEnum):
     MSP_RESULT_NO_REPLY = 0
 
 
-"""TODO: rewrite codec api, no "messagespec" helpers, load messages as classes using enums class per message, ex: msp.MSP_WP(waypointIndex=1)
-example:
-encoding:
-MSPCodec.MSP_messagename is implicit encode
-msg = mspMessage.MSP_SET_WP(
-   waypointIndex=1, 
-   action=InavEnums.navWaypointActions_e.NAV_WP_ACTION_WAYPOINT, 
-   latitude=int(1.234e7), 
-   longitude=int(2.345e7),
-   altitude=1500, 
-   param1=0, 
-   param2=0, 
-   param3=0, 
-   flag=0 or InavEnums.navWaypointFlags_e.something
-msg.code is InavMSP.MSP_SET_WP enum
-msg.bytes is packed bytes
-
-decoding:
-(send MSP_WP request, receive response)
-msg = MSPCodec.decode(received) 
-msg is mspMessage class
-msg.code is InavMSP.MSP_WP enum
-msg.action is InavEnums.navWaypointActions_e.NAV_WP_ACTION_WAYPOINT
-msg.waypointIndex is 1
-msg.latitude is 12340000
-msg.param3 is 0 or InavEnums.navWaypointP3Flags_e.something
-etc
-
-"""
-
 def _load_multiwii_enum(schema_path: Path) -> type[enum.IntEnum]:
     try:
         with schema_path.open("r", encoding="utf-8") as f:
