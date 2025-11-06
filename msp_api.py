@@ -8,6 +8,7 @@ from lib import InavDefines, InavEnums, InavMSP
 import lib.boxes as boxes
 from mspcodec import MSPCodec
 from msp_serial import MSPSerial
+import time
 
 __all__ = ["MSPApi"]
 
@@ -243,6 +244,8 @@ class MSPApi:
         }
 
     def get_logic_conditions(self) -> List[Dict[str, Any]]:
+        # causes *** stack smashing detected ***: terminated
+        # why?
         reps = self._request_unpack(InavMSP.MSP2_INAV_LOGIC_CONDITIONS)
         if isinstance(reps, Mapping):
             reps = [reps]  # defensive; schema should yield list
@@ -418,3 +421,87 @@ class MSPApi:
             "navError": InavEnums.navSystemStatus_Error_e(rep["navError"]),
             "targetHeading": rep["targetHeading"],
         }
+
+    
+
+    def _scale(value: float, scale: float) -> int:
+        return int(round(value * scale))
+
+    def _vec3(vec: Sequence[float], scale: float) -> tuple[int, int, int]:
+        return (
+            int(round(vec[0] * scale)),
+            int(round(vec[1] * scale)),
+            int(round(vec[2] * scale)),
+        )
+
+    def set_simulator(
+        self,
+        simulator_version: int,
+        flags: int,
+        *,
+        gps: Mapping[str, Any],
+        attitude: Mapping[str, float],
+        acc: Sequence[float],
+        gyro: Sequence[float],
+        baro_pressure: float,
+        mag: Sequence[int],
+        battery_voltage: float,
+        airspeed: float,
+        ext_flags: int,
+    ) -> Mapping[str, Any]:
+        gps_fix_type = int(gps["fix_type"])
+        gps_num_sat = int(gps["num_sat"])
+        gps_lat = _scale(gps["lat"], 1e7)
+        gps_lon = _scale(gps["lon"], 1e7)
+        gps_alt = _scale(gps["alt"], 100.0)
+        gps_speed = _scale(gps["speed"], 100.0)
+        gps_course = _scale(gps["course"], 10.0)
+        gps_vel_n = _scale(gps["vel_n"], 100.0)
+        gps_vel_e = _scale(gps["vel_e"], 100.0)
+        gps_vel_d = _scale(gps["vel_d"], 100.0)
+
+        imu_roll = _scale(attitude["roll"], 10.0)
+        imu_pitch = _scale(attitude["pitch"], 10.0)
+        imu_yaw = _scale(attitude["yaw"], 10.0)
+
+        acc_x, acc_y, acc_z = _vec3(acc, 1000.0)
+        gyro_x, gyro_y, gyro_z = _vec3(gyro, 16.0)
+        mag_x, mag_y, mag_z = _vec3(mag, 1.0)
+
+        payload = self._pack_request(
+            InavMSP.MSP_SIMULATOR,
+            {
+                "simulatorVersion": simulator_version,
+                "simulatorFlags_t": flags,
+                "gpsFixType": gps_fix_type,
+                "gpsNumSat": gps_num_sat,
+                "gpsLat": gps_lat,
+                "gpsLon": gps_lon,
+                "gpsAlt": gps_alt,
+                "gpsSpeed": gps_speed,
+                "gpsCourse": gps_course,
+                "gpsVelN": gps_vel_n,
+                "gpsVelE": gps_vel_e,
+                "gpsVelD": gps_vel_d,
+                "imuRoll": imu_roll,
+                "imuPitch": imu_pitch,
+                "imuYaw": imu_yaw,
+                "accX": acc_x,
+                "accY": acc_y,
+                "accZ": acc_z,
+                "gyroX": gyro_x,
+                "gyroY": gyro_y,
+                "gyroZ": gyro_z,
+                "baroPressure": _scale(baro_pressure, 1.0),
+                "magX": mag_x,
+                "magY": mag_y,
+                "magZ": mag_z,
+                "vbat": _scale(battery_voltage, 10.0),
+                "airspeed": _scale(airspeed, 100.0),
+                "extFlags": ext_flags,
+            },
+        )
+        return self._request_unpack(InavMSP.MSP_SIMULATOR, payload)
+
+    
+

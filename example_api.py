@@ -4,7 +4,7 @@ import argparse
 
 from lib import InavEnums
 from msp_api import MSPApi
-
+import time
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="MSP API demo")
@@ -54,11 +54,12 @@ def main() -> None:
         print()
         print("RX config:", api.get_rx_config())
 
-        print()
-        print("Logic conditions:")
-        for condition in api.get_logic_conditions():
-            if condition["enabled"]:
-                print(condition)
+        #skip this until patch, smashes the stack
+        #print()
+        #print("Logic conditions:")
+        #for condition in api.get_logic_conditions():
+        #    if condition["enabled"]:
+        #        print(condition)
 
         print()
         print("Attitude:", api.get_attitude())
@@ -71,7 +72,8 @@ def main() -> None:
 
         print()
         rc_channels = api.get_rc_channels()
-        print("RC channels:", rc_channels)
+        print("RC channels:", rc_channels[:6])
+
         target_channels = rc_channels[:] if rc_channels else [1500, 1500, 1500, 1500]
         ack = api.set_rc_channels(target_channels)
         print("SET_RAW_RC ack:", ack)
@@ -104,6 +106,38 @@ def main() -> None:
         print()
         print("Navigation status:", api.get_nav_status())
 
+        print()
+        simulator_reply = api.set_simulator(
+            simulator_version=1,
+            flags=(
+                int(InavEnums.simulatorFlags_t.HITL_ENABLE)
+                | int(InavEnums.simulatorFlags_t.HITL_HAS_NEW_GPS_DATA)
+                | int(InavEnums.simulatorFlags_t.HITL_AIRSPEED)
+                | int(InavEnums.simulatorFlags_t.HITL_EXT_BATTERY_VOLTAGE)
+            ),
+            gps={
+                "fix_type": InavEnums.gpsFixType_e.GPS_FIX_3D,
+                "num_sat": 10,
+                "lat": 37.7749,
+                "lon": -122.4194,
+                "alt": 35.0,
+                "speed": 12.5,
+                "course": 90.0,
+                "vel_n": 0.4,
+                "vel_e": -0.1,
+                "vel_d": -0.05,
+            },
+            attitude={"roll": 1.5, "pitch": -0.8, "yaw": 180.0},
+            acc=(0.01, -0.02, 0.98),
+            gyro=(0.0, 0.0, 0.0),
+            baro_pressure=1013.25,
+            mag=(230, 5, -410),
+            battery_voltage=12.4,
+            airspeed=11.2,
+            ext_flags=0,
+        )
+        print("SIMULATOR:", simulator_reply)
 
-if __name__ == "__main__":
+
+if __name__ == "__main__": 
     main()
