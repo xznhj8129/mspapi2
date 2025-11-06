@@ -509,10 +509,16 @@ class MSPCodec:
     ) -> Tuple[str, Any, int]:
         name = field.get("name") or f"f{index}"
         total_len = len(payload)
+        optional = bool(field.get("optional"))
         if offset > total_len:
             raise ValueError(f"{message_name}: field '{name}' offset {offset} exceeds payload size {total_len}")
 
         is_array = bool(field.get("array")) or "[]" in str(field.get("ctype", ""))
+
+        if offset == total_len:
+            if optional:
+                return name, ([] if is_array else None), offset
+            raise ValueError(f"{message_name}: field '{name}' offset {offset} exceeds payload size {total_len}")
 
         if is_array:
             base_ctype = field.get("array_ctype") or field.get("ctype", "")
@@ -545,6 +551,9 @@ class MSPCodec:
                     length = remaining // elem_size
             total_bytes = elem_size * length
             if offset + total_bytes > total_len:
+                if optional:
+                    default_val: Any = b"" if base_ctype == "char" else []
+                    return name, default_val, total_len
                 raise ValueError(
                     f"{message_name}: field '{name}' length {total_bytes} exceeds payload boundary ({offset} + {total_bytes} > {total_len})"
                 )
@@ -567,6 +576,8 @@ class MSPCodec:
             raise ValueError(f"{message_name}: unable to normalize format for field '{name}'")
         size = struct.calcsize(fmt)
         if offset + size > total_len:
+            if optional:
+                return name, None, total_len
             raise ValueError(
                 f"{message_name}: field '{name}' size {size} exceeds payload boundary ({offset} + {size} > {total_len})"
             )

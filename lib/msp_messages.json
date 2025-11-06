@@ -8902,31 +8902,36 @@
                     "name": "osdHeader",
                     "ctype": "uint8_t",
                     "desc": "OSD RLE Header (255)",
-                    "units": ""
+                    "units": "",
+                    "optional": true
                 },
                 {
                     "name": "osdRows",
                     "ctype": "uint8_t",
                     "desc": "(If OSD supported) Number of OSD rows",
-                    "units": ""
+                    "units": "",
+                    "optional": true
                 },
                 {
                     "name": "osdCols",
                     "ctype": "uint8_t",
                     "desc": "(If OSD supported) Number of OSD columns",
-                    "units": ""
+                    "units": "",
+                    "optional": true
                 },
                 {
                     "name": "osdStartY",
                     "ctype": "uint8_t",
                     "desc": "(If OSD supported) Starting row for RLE data",
-                    "units": ""
+                    "units": "",
+                    "optional": true
                 },
                 {
                     "name": "osdStartX",
                     "ctype": "uint8_t",
                     "desc": "(If OSD supported) Starting column for RLE data",
-                    "units": ""
+                    "units": "",
+                    "optional": true
                 },
                 {
                     "name": "osdRleData",
@@ -8935,7 +8940,8 @@
                     "array": true,
                     "array_ctype": "uint8_t",
                     "array_size": 0,
-                    "units": ""
+                    "units": "",
+                    "optional": true
                 }
             ]
         },

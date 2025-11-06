@@ -17,10 +17,12 @@ def _scale(value: float, scale: float) -> int:
     return int(round(value * scale))
 
 def _vec3(vec: Sequence[float], scale: float) -> tuple[int, int, int]:
+    min_val = -32768
+    max_val = 32767
     return (
-        int(round(vec[0] * scale)),
-        int(round(vec[1] * scale)),
-        int(round(vec[2] * scale)),
+        max(min(int(round(vec[0] * scale)), max_val), min_val),
+        max(min(int(round(vec[1] * scale)), max_val), min_val),
+        max(min(int(round(vec[2] * scale)), max_val), min_val),
     )
 
 class MSPApi:
@@ -50,7 +52,30 @@ class MSPApi:
             if not port:
                 raise ValueError("Serial port must be provided when tcp_endpoint is not set")
             self._serial = MSPSerial(port, baudrate, read_timeout=read_timeout, write_timeout=write_timeout)
+
+
         self.box_ids = None
+        self.chmap = [
+            "roll",
+            "pitch",
+            "throttle",
+            "yaw",
+            "ch5",
+            "ch6",
+            "ch7",
+            "ch8",
+            "ch9",
+            "ch10",
+            "ch11",
+            "ch12",
+            "ch13",
+            "ch14",
+            "ch15",
+            "ch16",
+            "ch17",
+            "ch18",
+        ]
+        self.rxmap = None
 
     def open(self) -> None:
         self._serial.open()
@@ -151,10 +176,13 @@ class MSPApi:
         min_pwm = InavDefines.CHANNEL_RANGE_MIN
         step_width = InavDefines.CHANNEL_RANGE_STEP_WIDTH
         summary: List[Dict[str, Any]] = []
+        armfound = False
         for entry in entries:
             permanent_id = entry["modePermanentId"]
-            if permanent_id == 0:
+            if armfound and permanent_id == 0:
                 continue
+            else:
+                armfound = True
             aux_index = entry["auxChannelIndex"]
             start_step = entry["rangeStartStep"]
             end_step = entry["rangeEndStep"]
@@ -172,6 +200,20 @@ class MSPApi:
                 }
             )
         return summary
+
+    def get_rx_map(self) -> Dict[str, Any]:
+        rep = self._request_unpack(InavMSP.MSP_RX_MAP)
+        rc_map = list(rep.get("rcMap"))
+        decoded= {}
+        for idx, mapped_idx in enumerate(rc_map):
+            source_name = self.chmap[idx] if idx < len(self.chmap) else f"aux{idx + 1}"
+            target_name = self.chmap[mapped_idx] if mapped_idx < len(self.chmap) else f"aux{mapped_idx + 1}"
+            decoded[idx] = {
+                    "name": source_name,
+                    "mappedTo": mapped_idx
+                }
+        self.rxmap = decoded
+        return decoded
 
     def get_inav_status(self) -> Dict[str, Any]:
         rep = self._request_unpack(InavMSP.MSP2_INAV_STATUS)
@@ -314,7 +356,7 @@ class MSPApi:
             raise ValueError("RC payload not aligned to 16-bit channel width")
         channel_count = len(payload) // channel_width
         return list(struct.unpack(f"<{channel_count}H", payload)) if channel_count else []
-
+        
     def set_rc_channels(self, channels: Sequence[int]) -> Mapping[str, Any]:
         if not channels:
             raise ValueError("channels must not be empty")

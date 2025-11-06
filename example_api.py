@@ -55,6 +55,9 @@ def main() -> None:
         print()
         print("RX config:", api.get_rx_config())
 
+        print()
+        print("RX map:", api.get_rx_map())
+
         #skip this until patch, smashes the stack
         #print()
         #print("Logic conditions:")

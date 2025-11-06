@@ -36,37 +36,17 @@ SEA_LEVEL_TEMP_K = 288.15
 GAS_CONSTANT = 8.3144598
 AIR_MOLAR_MASS = 0.0289644
 EARTH_GRAVITY = 9.80665
-UPDATE_RATE_HZ = 200.0
+UPDATE_RATE_HZ = 500.0
+RC_HZ = 200.0
 MAX_SENSOR_STALE_S = 0.25
 SIM_BATTERY_VOLTAGE = 15.4
 MOTOR_PWM_MIN = 1000.0
 MOTOR_PWM_MAX = 2100.0
 MOTOR_SPEED_MAX = 800.0
 RC_CHANNEL_COUNT = 16
-RC_NEUTRAL = 1500
-RC_LOW = 900
-RC_HIGH = 2100
-
-CHMAP = [
-    "roll",
-    "pitch",
-    "throttle",
-    "yaw",
-    "ch5",
-    "ch6",
-    "ch7",
-    "ch8",
-    "ch9",
-    "ch10",
-    "ch11",
-    "ch12",
-    "ch13",
-    "ch14",
-    "ch15",
-    "ch16",
-    "ch17",
-    "ch18",
-]
+RC_MID = 1500
+RC_LOW = 910
+RC_HIGH = 2099
 
 @dataclass
 class ImuSample:
@@ -262,7 +242,14 @@ class GazeboSITLBridge:
 
     def _prepare_accel(self, imu: ImuSample) -> Tuple[float, float, float]:
         ax, ay, az = imu.linear_accel
-        return (ax / GRAVITY, ay / GRAVITY, az / GRAVITY)
+        norm = math.sqrt(ax * ax + ay * ay + az * az)
+        # Gazebo tends to publish acceleration already expressed in G; fall back
+        # to converting from m/s^2 only if we detect larger magnitudes.
+        if norm > 3.0:  # likely m/s^2, convert to G
+            scale = 1.0 / GRAVITY
+        else:
+            scale = 1.0
+        return (ax * scale, ay * scale, az * scale)
 
     def _prepare_gyro(self, imu: ImuSample) -> Tuple[float, float, float]:
         gx, gy, gz = imu.angular_velocity
@@ -307,7 +294,15 @@ class GazeboSITLBridge:
         if not pwm_seq:
             return
 
-        speeds = [self._motor_pwm_to_speed(pwm) for pwm in pwm_seq[:4]]
+        inav_to_gazebo = [1, 2, 3, 0]  # FR, RL, FL, RR according to INAV motor order
+        reordered = []
+        for idx in inav_to_gazebo:
+            if idx < len(pwm_seq):
+                reordered.append(pwm_seq[idx])
+            else:
+                reordered.append(MOTOR_PWM_MIN)
+
+        speeds = [self._motor_pwm_to_speed(pwm) for pwm in reordered[:4]]
         for idx, value in enumerate(speeds):
             self.motor_msg.velocity[idx] = value
         self.motor_pub.publish(self.motor_msg)
@@ -328,24 +323,49 @@ class GazeboSITLBridge:
             write_timeout=args.write_timeout,
             tcp_endpoint=args.tcp,
         ) as api:
-            rc_channels = [RC_NEUTRAL] * RC_CHANNEL_COUNT
-            rc_channels[2] = 900
-            rc_channels[4] = 900
+            rc_channels = [RC_LOW] * RC_CHANNEL_COUNT
+            rc_channels[0] = RC_MID
+            rc_channels[1] = RC_MID
+            rc_channels[3] = RC_MID
+
+            armtime = 10
             last_status_log = 0.0
+            ccc=0
             start_time = time.time()
+            print()
+            print("Mode ranges:")
+            moderanges = api.get_mode_ranges()
+            for entry in moderanges:
+                print(entry)
+            arm_clear = False
+            arming = False
+
+            
             while True:
                 loop_start = time.time()
                 snapshot = self._snapshot(MAX_SENSOR_STALE_S)
                 if snapshot is None:
                     time.sleep(0.01)
+                    ccc+=1
+                    if ccc>100:
+                        print('hung sleeping no snapshot - is Gazebo running?')
                     continue
-
+                ccc=0
                 elapsed_since_start = loop_start - start_time
 
-                if elapsed_since_start >= 5.0:
-                    rc_channels[4] = RC_HIGH
-                if elapsed_since_start >= 10.0:
-                    rc_channels[2] = RC_HIGH
+                if arm_clear and not arming:
+                    arming = True
+                    armtime = elapsed_since_start
+
+
+                rc_channels[api.chmap.index("ch6")] = RC_HIGH
+                if elapsed_since_start >= armtime:
+                    rc_channels[api.chmap.index("ch5")] = RC_HIGH
+                if elapsed_since_start >= armtime + 3:
+                    rc_channels[api.chmap.index("throttle")] = RC_HIGH
+                if elapsed_since_start >= armtime + 8:
+                    rc_channels[api.chmap.index("ch7")] = RC_HIGH
+                    rc_channels[api.chmap.index("throttle")] = RC_MID
                 api.set_rc_channels(rc_channels)
 
                 imu, gps, mag, baro = snapshot
@@ -366,7 +386,7 @@ class GazeboSITLBridge:
                     flags |= int(InavEnums.simulatorFlags_t.HITL_AIRSPEED)
 
                 reply = api.set_simulator(
-                    simulator_version=1,
+                    simulator_version=2,
                     flags=flags,
                     gps={
                         "fix_type": fix_type,
@@ -409,10 +429,18 @@ class GazeboSITLBridge:
                     rc_state = rc_state_raw[:8]
                     attitude = api.get_attitude()
                     altitude = api.get_altitude()
+                    armingflags = status['armingFlags']['decoded']
+                    if len(armingflags) == 0 or (len(armingflags) == 1 and armingflags[0]==InavEnums.armingFlag_e.SIMULATOR_MODE_HITL):
+                        armclear = True
+                    
                     print()
                     print(f"T: {elapsed_since_start:.3f}")
+                    print('gazebo atti:',att_roll, att_pitch, att_yaw)
+                    print('gazebo acc:',acc)
+                    print('gazebo gyro:',gyro)
+                    print('gazebo baro pressure:',pressure)
                     print("Arming flags:", status['armingFlags']['decoded'])
-                    print("Modes:", status['activeModes'])
+                    print("Active Modes:", status['activeModes'])
                     print("RC channels (AETR):", rc_channels[:8])
                     print("RC state (AERT):", rc_state)
                     print("Attitude:", attitude)
