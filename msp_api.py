@@ -50,6 +50,7 @@ class MSPApi:
             if not port:
                 raise ValueError("Serial port must be provided when tcp_endpoint is not set")
             self._serial = MSPSerial(port, baudrate, read_timeout=read_timeout, write_timeout=write_timeout)
+        self.box_ids = None
 
     def open(self) -> None:
         self._serial.open()
@@ -144,7 +145,8 @@ class MSPApi:
         return list(rep["boxIds"])
 
     def get_mode_ranges(self) -> List[Dict[str, Any]]:
-        box_ids = self.get_box_ids()
+        if not self.box_ids:
+            self.box_ids = self.get_box_ids()
         entries = self._request_unpack(InavMSP.MSP_MODE_RANGES)
         min_pwm = InavDefines.CHANNEL_RANGE_MIN
         step_width = InavDefines.CHANNEL_RANGE_STEP_WIDTH
@@ -163,7 +165,7 @@ class MSPApi:
             summary.append(
                 {
                     "mode": box_name,
-                    "boxIndex": box_ids.index(permanent_id) if permanent_id in box_ids else None,
+                    "boxIndex": self.box_ids.index(permanent_id) if permanent_id in self.box_ids else None,
                     "permanentId": permanent_id,
                     "auxChannelIndex": aux_index,
                     "pwmRange": (pwm_start, pwm_end),
@@ -173,10 +175,11 @@ class MSPApi:
 
     def get_inav_status(self) -> Dict[str, Any]:
         rep = self._request_unpack(InavMSP.MSP2_INAV_STATUS)
-        box_ids = self.get_box_ids()
+        if not self.box_ids:
+            self.box_ids = self.get_box_ids()
         active_modes_bits = rep["activeModes"]
         active_modes: List[Dict[str, Any]] = []
-        for idx, permanent_id in enumerate(box_ids):
+        for idx, permanent_id in enumerate(self.box_ids):
             if active_modes_bits & (1 << idx):
                 box_info = boxes.MODEBOXES.get(permanent_id, {})
                 active_modes.append(

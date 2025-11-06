@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 from lib import InavEnums
+import lib.boxes as boxes
 from msp_api import MSPApi
 import time
 
@@ -106,7 +107,29 @@ def main() -> None:
         print()
         print("Navigation status:", api.get_nav_status())
 
-        print()
+        box_ids = api.get_box_ids()
+        active_mode_mask = 0
+        for mode in status["activeModes"]:
+            box_index = mode.get("boxIndex")
+            if box_index is None:
+                continue
+            active_mode_mask |= 1 << box_index
+
+        active_modes = []
+        for idx, permanent_id in enumerate(box_ids):
+            if not (active_mode_mask & (1 << idx)):
+                continue
+            mode_info = boxes.MODEBOXES.get(permanent_id, {})
+            active_modes.append(
+                {
+                    "boxIndex": idx,
+                    "permanentId": permanent_id,
+                    "boxName": mode_info.get("boxName", f"UNKNOWN_{permanent_id}"),
+                }
+            )
+        print("Active modes:", active_modes)
+
+        """print()
         simulator_reply = api.set_simulator(
             simulator_version=1,
             flags=(
@@ -136,7 +159,7 @@ def main() -> None:
             airspeed=11.2,
             ext_flags=0,
         )
-        print("SIMULATOR:", simulator_reply)
+        print("SIMULATOR:", simulator_reply)"""
 
 
 if __name__ == "__main__": 

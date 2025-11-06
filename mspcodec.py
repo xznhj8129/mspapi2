@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Iterable, Mapping, Any, Union, Tuple
+from typing import Dict, List, Optional, Iterable, Mapping, Any, Union, Tuple, Sequence
 import enum
 import json
 import struct
@@ -228,6 +228,150 @@ class MSPCodec:
             raise ValueError(f"Expected {len(names)} values, got {len(vals)}")
         return vals
 
+    @staticmethod
+    def _field_is_array(field: Mapping[str, Any]) -> bool:
+        if not field:
+            return False
+        if field.get("array"):
+            return True
+        ctype = str(field.get("ctype", ""))
+        return "[]" in ctype or "[" in ctype
+
+    @staticmethod
+    def _field_array_length(field: Mapping[str, Any]) -> Optional[int]:
+        size = field.get("array_size")
+        if isinstance(size, int):
+            return size
+        if isinstance(size, str) and size.isdigit():
+            return int(size)
+        return None
+
+    @staticmethod
+    def _field_array_base(field: Mapping[str, Any]) -> str:
+        base = field.get("array_ctype")
+        if base:
+            return str(base).replace("[]", "").strip()
+        ctype = str(field.get("ctype", ""))
+        if "[" in ctype:
+            ctype = ctype.split("[", 1)[0]
+        return ctype.replace("[]", "").strip()
+
+    @classmethod
+    def _map_struct_values(
+        cls,
+        message_name: str,
+        side: _PayloadSide,
+        values: Sequence[Any],
+    ) -> Dict[str, Any]:
+        if not side.field_names:
+            return {}
+
+        if not side.fields:
+            return dict(zip(side.field_names, values))
+
+        result: Dict[str, Any] = {}
+        idx = 0
+        total = len(values)
+
+        for name, field in zip(side.field_names, side.fields):
+            if not cls._field_is_array(field):
+                if idx >= total:
+                    raise ValueError(f"{message_name}: insufficient data for field '{name}'")
+                result[name] = values[idx]
+                idx += 1
+                continue
+
+            base = cls._field_array_base(field)
+            arr_len = cls._field_array_length(field)
+
+            if base == "char":
+                if idx >= total:
+                    raise ValueError(f"{message_name}: insufficient data for field '{name}'")
+                result[name] = values[idx]
+                idx += 1
+                continue
+
+            if arr_len is None or arr_len <= 0 or idx + arr_len > total:
+                arr_len = total - idx
+
+            if arr_len < 0 or idx + arr_len > total:
+                raise ValueError(f"{message_name}: array field '{name}' exceeds payload size")
+
+            chunk = list(values[idx : idx + arr_len])
+            result[name] = chunk
+            idx += arr_len
+
+        if idx < total:
+            last_field = side.fields[-1] if side.fields else None
+            last_name = side.field_names[-1]
+            if last_field and cls._field_is_array(last_field) and cls._field_array_base(last_field) != "char":
+                extra = list(values[idx:])
+                existing = result.get(last_name, [])
+                if not isinstance(existing, list):
+                    existing = list(existing)
+                existing.extend(extra)
+                result[last_name] = existing
+                idx = total
+
+        if idx != total:
+            raise ValueError(f"{message_name}: unused payload data ({total - idx} values)")
+
+        return result
+
+    @classmethod
+    def _flatten_struct_values(
+        cls,
+        message_name: str,
+        side: _PayloadSide,
+        values: Union[Iterable[Any], Mapping[str, Any]],
+    ) -> List[Any]:
+        if not side.field_names:
+            return []
+
+        if not side.fields:
+            return cls._values_in_order(values, side.field_names)
+
+        if isinstance(values, Mapping):
+            data = values
+        else:
+            seq = list(values)
+            if len(seq) != len(side.field_names):
+                raise ValueError(f"{message_name}: expected {len(side.field_names)} values, got {len(seq)}")
+            data = dict(zip(side.field_names, seq))
+
+        flat: List[Any] = []
+        for name, field in zip(side.field_names, side.fields):
+            if name not in data:
+                raise KeyError(f"{message_name}: missing value for field '{name}'")
+            value = data[name]
+            if not cls._field_is_array(field):
+                flat.append(value)
+                continue
+
+            base = cls._field_array_base(field)
+            arr_len = cls._field_array_length(field)
+
+            if base == "char":
+                if isinstance(value, (bytes, bytearray)):
+                    flat.append(bytes(value))
+                elif isinstance(value, str):
+                    flat.append(value.encode("latin1"))
+                else:
+                    raise ValueError(f"{message_name}: expected bytes for char array field '{name}'")
+                continue
+
+            if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+                raise ValueError(f"{message_name}: expected sequence for array field '{name}'")
+
+            items = list(value)
+            if arr_len is not None and arr_len > 0 and len(items) != arr_len:
+                raise ValueError(
+                    f"{message_name}: array field '{name}' expects {arr_len} elements, got {len(items)}"
+                )
+            flat.extend(items)
+
+        return flat
+
     # ----- Public API -----
 
     def pack_request(self, code: InavMSP, values: Union[Iterable[Any], Mapping[str, Any]] = ()) -> bytes:
@@ -237,7 +381,7 @@ class MSPCodec:
             if values not in ((), [], {}):
                 raise ValueError(f"{spec.name}: request has no payload")
             return b""
-        ordered = self._values_in_order(values, spec.request.field_names)
+        ordered = self._flatten_struct_values(spec.name, spec.request, values)
         try:
             return struct.pack(fmt, *ordered)
         except struct.error as e:
@@ -262,7 +406,7 @@ class MSPCodec:
             values = struct.unpack(fmt, payload)
         except struct.error as e:
             raise ValueError(f"{spec.name}: unpack_reply error: {e}")
-        return dict(zip(side.field_names, values))
+        return self._map_struct_values(spec.name, side, values)
 
     # why
     def unpack_request(self, code: InavMSP, payload: bytes) -> Dict[str, Any]:
@@ -275,7 +419,8 @@ class MSPCodec:
         size = struct.calcsize(fmt)
         if len(payload) != size:
             raise ValueError(f"{spec.name}: request size {len(payload)} != expected {size}")
-        return dict(zip(spec.request.field_names, struct.unpack(fmt, payload)))
+        values = struct.unpack(fmt, payload)
+        return self._map_struct_values(spec.name, spec.request, values)
 
     def pack_reply(self, code: InavMSP, values: Union[Iterable[Any], Mapping[str, Any]] = ()) -> bytes:
         spec = self._get_spec(code)
@@ -284,7 +429,7 @@ class MSPCodec:
             if values not in ((), [], {}):
                 raise ValueError(f"{spec.name}: reply has no payload")
             return b""
-        ordered = self._values_in_order(values, spec.reply.field_names)
+        ordered = self._flatten_struct_values(spec.name, spec.reply, values)
         try:
             return struct.pack(fmt, *ordered)
         except struct.error as e:
@@ -303,8 +448,8 @@ class MSPCodec:
             raise ValueError(f"{message_name}: decoded {offset} of {len(payload)} payload bytes")
         return values
 
-    @staticmethod
-    def _decode_repeating_payload(message_name: str, side: _PayloadSide, payload: bytes) -> List[Any]:
+    @classmethod
+    def _decode_repeating_payload(cls, message_name: str, side: _PayloadSide, payload: bytes) -> List[Any]:
         if not payload:
             return []
 
@@ -319,7 +464,7 @@ class MSPCodec:
             entries: List[Dict[str, Any]] = []
             for offset in range(0, len(payload), entry_size):
                 raw = struct.unpack_from(side.struct_fmt, payload, offset)
-                entries.append(dict(zip(side.field_names, raw)))
+                entries.append(cls._map_struct_values(message_name, side, raw))
             return entries
 
         fields = side.fields

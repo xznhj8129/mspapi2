@@ -142,6 +142,8 @@ try:
     ]
     print('Arming flags:',armingFlagsDecoded)
     # ex: ['ARMING_DISABLED_NOT_LEVEL', 'ARMING_DISABLED_NAVIGATION_UNSAFE', 'ARMING_DISABLED_HARDWARE_FAILURE', 'ARMING_DISABLED_RC_LINK']
+
+    # Active modes decoding
     active_modes = []
     for idx, permanent_id in enumerate(box_ids):
         if not (activeModes & (1 << idx)):

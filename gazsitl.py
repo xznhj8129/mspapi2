@@ -1,12 +1,17 @@
+#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
 import math
+import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple
+from typing import Mapping, Optional, Sequence, Tuple
 
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+
+# no fallbacks
 from gz.msgs11.actuators_pb2 import Actuators
 from gz.msgs11.altimeter_pb2 import Altimeter
 from gz.msgs11.imu_pb2 import IMU
@@ -31,7 +36,37 @@ SEA_LEVEL_TEMP_K = 288.15
 GAS_CONSTANT = 8.3144598
 AIR_MOLAR_MASS = 0.0289644
 EARTH_GRAVITY = 9.80665
+UPDATE_RATE_HZ = 200.0
+MAX_SENSOR_STALE_S = 0.25
+SIM_BATTERY_VOLTAGE = 15.4
+MOTOR_PWM_MIN = 1000.0
+MOTOR_PWM_MAX = 2100.0
+MOTOR_SPEED_MAX = 800.0
+RC_CHANNEL_COUNT = 16
+RC_NEUTRAL = 1500
+RC_LOW = 900
+RC_HIGH = 2100
 
+CHMAP = [
+    "roll",
+    "pitch",
+    "throttle",
+    "yaw",
+    "ch5",
+    "ch6",
+    "ch7",
+    "ch8",
+    "ch9",
+    "ch10",
+    "ch11",
+    "ch12",
+    "ch13",
+    "ch14",
+    "ch15",
+    "ch16",
+    "ch17",
+    "ch18",
+]
 
 @dataclass
 class ImuSample:
@@ -74,12 +109,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tcp", metavar="HOST:PORT", help="Connect using TCP socket instead of serial, e.g. localhost:5760")
     parser.add_argument("--read-timeout", type=float, default=0.05, help="MSP read timeout in seconds")
     parser.add_argument("--write-timeout", type=float, default=0.25, help="MSP write timeout in seconds")
-    parser.add_argument("--rate", type=float, default=200.0, help="Bridge update rate in Hz")
-    parser.add_argument("--max-stale", type=float, default=0.25, help="Max sensor age before data is considered stale")
-    parser.add_argument("--battery-voltage", type=float, default=15.4, help="Simulated battery voltage in volts")
-    parser.add_argument("--motor-speed-max", type=float, default=900.0, help="Maximum rotor speed command published to Gazebo (rad/s)")
-    parser.add_argument("--motor-pwm-min", type=float, default=1000.0, help="Minimum PWM (interpreted as stopped motor)")
-    parser.add_argument("--motor-pwm-max", type=float, default=2000.0, help="Maximum PWM (maps to --motor-speed-max)")
     parser.add_argument("--debug", action="store_true", help="Print MSP/Gazebo telemetry debug info")
     return parser.parse_args()
 
@@ -259,17 +288,26 @@ class GazeboSITLBridge:
         return math.sqrt(gps.vel_east ** 2 + gps.vel_north ** 2 + gps.vel_up ** 2)
 
     def _motor_pwm_to_speed(self, pwm: float) -> float:
-        span = self.args.motor_pwm_max - self.args.motor_pwm_min
+        span = MOTOR_PWM_MAX - MOTOR_PWM_MIN
         if span <= 0:
             return 0.0
-        normalised = (pwm - self.args.motor_pwm_min) / span
+        normalised = (pwm - MOTOR_PWM_MIN) / span
         normalised = clamp(normalised, 0.0, 1.0)
-        return normalised * self.args.motor_speed_max
+        return normalised * MOTOR_SPEED_MAX
 
-    def _publish_motors(self, pwm_values: Sequence[float]) -> None:
-        if not pwm_values:
+    def _publish_motors(self, pwm_values: object) -> None:
+        if isinstance(pwm_values, Mapping):
+            pwm_values = pwm_values.get("motorOutputs", ())
+
+        if isinstance(pwm_values, Sequence):
+            pwm_seq = list(pwm_values)
+        else:
+            pwm_seq = [float(pwm_values)] if pwm_values is not None else []
+
+        if not pwm_seq:
             return
-        speeds = [self._motor_pwm_to_speed(pwm) for pwm in pwm_values[:4]]
+
+        speeds = [self._motor_pwm_to_speed(pwm) for pwm in pwm_seq[:4]]
         for idx, value in enumerate(speeds):
             self.motor_msg.velocity[idx] = value
         self.motor_pub.publish(self.motor_msg)
@@ -281,7 +319,7 @@ class GazeboSITLBridge:
 
     def run(self) -> None:
         args = self.args
-        poll_period = 1.0 / args.rate if args.rate > 0 else 0.01
+        poll_period = 1.0 / UPDATE_RATE_HZ if UPDATE_RATE_HZ > 0 else 0.01
         port = None if args.tcp else args.port
         with MSPApi(
             port=port,
@@ -290,12 +328,25 @@ class GazeboSITLBridge:
             write_timeout=args.write_timeout,
             tcp_endpoint=args.tcp,
         ) as api:
+            rc_channels = [RC_NEUTRAL] * RC_CHANNEL_COUNT
+            rc_channels[2] = 900
+            rc_channels[4] = 900
+            last_status_log = 0.0
+            start_time = time.time()
             while True:
                 loop_start = time.time()
-                snapshot = self._snapshot(args.max_stale)
+                snapshot = self._snapshot(MAX_SENSOR_STALE_S)
                 if snapshot is None:
                     time.sleep(0.01)
                     continue
+
+                elapsed_since_start = loop_start - start_time
+
+                if elapsed_since_start >= 5.0:
+                    rc_channels[4] = RC_HIGH
+                if elapsed_since_start >= 10.0:
+                    rc_channels[2] = RC_HIGH
+                api.set_rc_channels(rc_channels)
 
                 imu, gps, mag, baro = snapshot
                 fix_type, num_sat, lat, lon, alt, speed, course, vel_n, vel_e, vel_d = self._prepare_gps_payload(gps)
@@ -334,12 +385,12 @@ class GazeboSITLBridge:
                     gyro=gyro,
                     baro_pressure=pressure,
                     mag=mag_counts,
-                    battery_voltage=args.battery_voltage,
+                    battery_voltage=SIM_BATTERY_VOLTAGE,
                     airspeed=airspeed,
                     ext_flags=0,
                 )
 
-                motors = api._request_unpack(InavMSP.MSP_MOTOR)["motorOutputs"]
+                motors = api._request_unpack(InavMSP.MSP_MOTOR)
                 self._publish_motors(motors)
 
                 if args.debug and reply:
@@ -351,6 +402,23 @@ class GazeboSITLBridge:
                         f"MSP_SIM: roll={stab_roll} pitch={stab_pitch} yaw={stab_yaw} thr={stab_thr} "
                         f"motors={motors[:4]} flags=0x{reply['debugFlags']:02x}"
                     )
+
+                if loop_start - last_status_log >= 1.0:
+                    status = api.get_inav_status()
+                    rc_state_raw = api.get_rc_channels() or []
+                    rc_state = rc_state_raw[:8]
+                    attitude = api.get_attitude()
+                    altitude = api.get_altitude()
+                    print()
+                    print(f"T: {elapsed_since_start:.3f}")
+                    print("Arming flags:", status['armingFlags']['decoded'])
+                    print("Modes:", status['activeModes'])
+                    print("RC channels (AETR):", rc_channels[:8])
+                    print("RC state (AERT):", rc_state)
+                    print("Attitude:", attitude)
+                    print("Altitude:", altitude)
+                    print("Motors:",motors)
+                    last_status_log = loop_start
 
                 elapsed = time.time() - loop_start
                 if poll_period > elapsed:
