@@ -13,6 +13,16 @@ import time
 __all__ = ["MSPApi"]
 
 
+def _scale(value: float, scale: float) -> int:
+    return int(round(value * scale))
+
+def _vec3(vec: Sequence[float], scale: float) -> tuple[int, int, int]:
+    return (
+        int(round(vec[0] * scale)),
+        int(round(vec[1] * scale)),
+        int(round(vec[2] * scale)),
+    )
+
 class MSPApi:
     """
     High-level MSP helper backed by MSPCodec + MSPSerial.
@@ -422,17 +432,7 @@ class MSPApi:
             "targetHeading": rep["targetHeading"],
         }
 
-    
 
-    def _scale(value: float, scale: float) -> int:
-        return int(round(value * scale))
-
-    def _vec3(vec: Sequence[float], scale: float) -> tuple[int, int, int]:
-        return (
-            int(round(vec[0] * scale)),
-            int(round(vec[1] * scale)),
-            int(round(vec[2] * scale)),
-        )
 
     def set_simulator(
         self,
@@ -501,7 +501,9 @@ class MSPApi:
                 "extFlags": ext_flags,
             },
         )
-        return self._request_unpack(InavMSP.MSP_SIMULATOR, payload)
+        raw_reply = self._request_raw(InavMSP.MSP_SIMULATOR, payload)
+        if not raw_reply:
+            return {}
+        return self._codec.unpack_reply(InavMSP.MSP_SIMULATOR, raw_reply)
 
     
-
