@@ -42,11 +42,12 @@ MAX_SENSOR_STALE_S = 0.25
 SIM_BATTERY_VOLTAGE = 15.4
 MOTOR_PWM_MIN = 1000.0
 MOTOR_PWM_MAX = 2100.0
-MOTOR_SPEED_MAX = 800.0
+MOTOR_SPEED_MAX = 800
 RC_CHANNEL_COUNT = 16
 RC_MID = 1500
 RC_LOW = 910
 RC_HIGH = 2099
+slowdown = 1
 
 @dataclass
 class ImuSample:
@@ -280,7 +281,7 @@ class GazeboSITLBridge:
             return 0.0
         normalised = (pwm - MOTOR_PWM_MIN) / span
         normalised = clamp(normalised, 0.0, 1.0)
-        return normalised * MOTOR_SPEED_MAX
+        return normalised * MOTOR_SPEED_MAX * slowdown
 
     def _publish_motors(self, pwm_values: object) -> None:
         if isinstance(pwm_values, Mapping):
@@ -294,7 +295,9 @@ class GazeboSITLBridge:
         if not pwm_seq:
             return
 
-        inav_to_gazebo = [1, 2, 3, 0]  # FR, RL, FL, RR according to INAV motor order
+        inav_to_gazebo = [1, 2, 3, 0]
+
+
         reordered = []
         for idx in inav_to_gazebo:
             if idx < len(pwm_seq):
@@ -303,6 +306,11 @@ class GazeboSITLBridge:
                 reordered.append(MOTOR_PWM_MIN)
 
         speeds = [self._motor_pwm_to_speed(pwm) for pwm in reordered[:4]]
+        #0 = front right
+        #1 = rear left
+        #2 = front left
+        #3 = rear right
+        print("motor speeds:", speeds)
         for idx, value in enumerate(speeds):
             self.motor_msg.velocity[idx] = value
         self.motor_pub.publish(self.motor_msg)
@@ -337,7 +345,7 @@ class GazeboSITLBridge:
             moderanges = api.get_mode_ranges()
             for entry in moderanges:
                 print(entry)
-            arm_clear = False
+            armclear = False
             arming = False
 
             
@@ -353,19 +361,19 @@ class GazeboSITLBridge:
                 ccc=0
                 elapsed_since_start = loop_start - start_time
 
-                if arm_clear and not arming:
+                if armclear and not arming:
                     arming = True
                     armtime = elapsed_since_start
 
-
                 rc_channels[api.chmap.index("ch6")] = RC_HIGH
-                if elapsed_since_start >= armtime:
-                    rc_channels[api.chmap.index("ch5")] = RC_HIGH
-                if elapsed_since_start >= armtime + 3:
-                    rc_channels[api.chmap.index("throttle")] = RC_HIGH
-                if elapsed_since_start >= armtime + 8:
-                    rc_channels[api.chmap.index("ch7")] = RC_HIGH
-                    rc_channels[api.chmap.index("throttle")] = RC_MID
+                if arming:
+                    if elapsed_since_start >= armtime:
+                        rc_channels[api.chmap.index("ch5")] = RC_HIGH
+                    if elapsed_since_start >= armtime + 3:
+                        rc_channels[api.chmap.index("throttle")] = RC_HIGH
+                    if elapsed_since_start >= armtime + 8:
+                        rc_channels[api.chmap.index("ch7")] = RC_HIGH
+                        rc_channels[api.chmap.index("throttle")] = RC_MID
                 api.set_rc_channels(rc_channels)
 
                 imu, gps, mag, baro = snapshot
@@ -430,11 +438,18 @@ class GazeboSITLBridge:
                     attitude = api.get_attitude()
                     altitude = api.get_altitude()
                     armingflags = status['armingFlags']['decoded']
-                    if len(armingflags) == 0 or (len(armingflags) == 1 and armingflags[0]==InavEnums.armingFlag_e.SIMULATOR_MODE_HITL):
+                    allowed = {
+                        InavEnums.armingFlag_e.SIMULATOR_MODE_HITL,
+                        InavEnums.armingFlag_e.WAS_EVER_ARMED,
+                    }
+
+                    if not armingflags or set(armingflags) <= allowed:
                         armclear = True
                     
                     print()
                     print(f"T: {elapsed_since_start:.3f}")
+                    if armclear: print('READY')
+                    if arming: print("ARMED")
                     print('gazebo atti:',att_roll, att_pitch, att_yaw)
                     print('gazebo acc:',acc)
                     print('gazebo gyro:',gyro)
