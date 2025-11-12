@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import struct
+import base64
+import json
+import socket
+import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union, Tuple
 
 from lib import InavDefines, InavEnums, InavMSP
 import lib.boxes as boxes
@@ -10,7 +14,7 @@ from mspcodec import MSPCodec
 from msp_serial import MSPSerial
 import time
 
-__all__ = ["MSPApi"]
+__all__ = ["MSPApi", "MSPServerTransport"]
 
 
 def _scale(value: float, scale: float) -> int:
@@ -40,18 +44,40 @@ class MSPApi:
         write_timeout: float = 0.25,
         codec_path: Optional[Path] = None,
         tcp_endpoint: Optional[str] = None,
+        serial_transport: Optional[Any] = None,
     ) -> None:
         schema_path = codec_path or Path(__file__).with_name("lib") / "msp_messages.json"
         self._codec = MSPCodec.from_json_file(str(schema_path))
         endpoint = tcp_endpoint.strip() if tcp_endpoint else None
-        if endpoint:
-            if ":" not in endpoint:
-                raise ValueError("tcp_endpoint must be in HOST:PORT format")
-            self._serial = MSPSerial(endpoint, baudrate, read_timeout=read_timeout, write_timeout=write_timeout, tcp=True)
+        keepalive_kwargs = {
+            "keepalive_code": int(InavMSP.MSP_API_VERSION),
+            "keepalive_interval": 5.0,
+            "keepalive_timeout": 0.5,
+        }
+        if serial_transport is not None:
+            self._serial = serial_transport
         else:
-            if not port:
-                raise ValueError("Serial port must be provided when tcp_endpoint is not set")
-            self._serial = MSPSerial(port, baudrate, read_timeout=read_timeout, write_timeout=write_timeout)
+            if endpoint:
+                if ":" not in endpoint:
+                    raise ValueError("tcp_endpoint must be in HOST:PORT format")
+                self._serial = MSPSerial(
+                    endpoint,
+                    baudrate,
+                    read_timeout=read_timeout,
+                    write_timeout=write_timeout,
+                    tcp=True,
+                    **keepalive_kwargs,
+                )
+            else:
+                if not port:
+                    raise ValueError("Serial port must be provided when tcp_endpoint is not set")
+                self._serial = MSPSerial(
+                    port,
+                    baudrate,
+                    read_timeout=read_timeout,
+                    write_timeout=write_timeout,
+                    **keepalive_kwargs,
+                )
 
 
         self.box_ids = None
@@ -76,6 +102,8 @@ class MSPApi:
             "ch18",
         ]
         self.rxmap = None
+        self.diag: Optional[Dict[str, Any]] = None
+        self._last_code: Optional[int] = None
 
     def open(self) -> None:
         self._serial.open()
@@ -92,53 +120,142 @@ class MSPApi:
 
     # ----- helpers -----
 
+    def _build_info(self, diag: Optional[Dict[str, Any]], code: Optional[Union[InavMSP, int]]) -> Dict[str, Any]:
+        if code is not None:
+            code_int = int(code.value) if isinstance(code, InavMSP) else int(code)
+        elif diag is not None and "code" in diag:
+            code_int = int(diag.get("code"))
+        else:
+            code_int = None
+        info: Dict[str, Any] = {
+            "code": code_int,
+            "latency_ms": None,
+            "cached": None,
+            "cache_age_ms": None,
+            "scheduled": False,
+            "schedule_delay_s": None,
+            "transport": None,
+            "attempt": None,
+            "timestamp": None,
+            "server": None,
+            "client": None,
+            "code_stats": None,
+        }
+        if not diag:
+            return info
+        info["latency_ms"] = diag.get("duration_ms")
+        info["cached"] = diag.get("cached")
+        info["cache_age_ms"] = diag.get("cache_age_ms")
+        info["scheduled"] = bool(diag.get("scheduled"))
+        info["schedule_delay_s"] = diag.get("schedule_delay")
+        info["transport"] = diag.get("transport")
+        info["attempt"] = diag.get("attempt")
+        info["timestamp"] = diag.get("timestamp")
+        info["server"] = diag.get("server")
+        info["client"] = diag.get("client")
+        info["code_stats"] = diag.get("code_stats")
+        info["raw"] = diag
+        return info
+
+    def _capture_info(self, code: Optional[InavMSP]) -> Dict[str, Any]:
+        diag = getattr(self._serial, "last_diag", None)
+        info = self._build_info(diag, code)
+        self.diag = info
+        self._last_code = info.get("code")
+        return info
+
+    def info_from_diag(self, diag: Optional[Dict[str, Any]], code: Optional[Union[InavMSP, int]] = None) -> Dict[str, Any]:
+        info = self._build_info(diag, code)
+        self.diag = info
+        return info
+
     def _request_raw(
         self,
         code: InavMSP,
         payload: bytes = b"",
         *,
         timeout: float = 1.0,
-    ) -> bytes:
+    ) -> Tuple[Dict[str, Any], bytes]:
         self.open()
         rsp_code, rsp_payload = self._serial.request(int(code), payload, timeout=timeout)
+        info = self._capture_info(code)
         if rsp_code != int(code):
             raise RuntimeError(f"Unexpected MSP response code {rsp_code} for request {int(code)}")
-        return rsp_payload
+        return info, rsp_payload
 
-    def _request_unpack(
+    def _request(
         self,
         code: InavMSP,
         payload: bytes = b"",
         *,
         timeout: float = 1.0,
-    ) -> Union[Mapping[str, Any], List[Mapping[str, Any]]]:
-        raw = self._request_raw(code, payload, timeout=timeout)
-        return self._codec.unpack_reply(code, raw)
+    ) -> Tuple[Dict[str, Any], Union[Mapping[str, Any], List[Mapping[str, Any]]]]:
+        info, raw = self._request_raw(code, payload, timeout=timeout)
+        return info, self._codec.unpack_reply(code, raw)
 
     def _pack_request(self, code: InavMSP, data: Mapping[str, Any]) -> bytes:
         return self._codec.pack_request(code, data)
 
+    def sched_set(
+        self,
+        code: Union[InavMSP, int],
+        delay: float,
+        payload: Optional[Mapping[str, Any]] = None,
+        timeout: float = 1.0,
+    ) -> Tuple[Dict[str, Any], Any]:
+        handler = getattr(self._serial, "sched_set", None)
+        if handler is None:
+            raise NotImplementedError("Transport does not support scheduling")
+        code_int = int(code.value if isinstance(code, InavMSP) else code)
+        result = handler(code_int, delay, payload, timeout)
+        info = self._build_info(getattr(self._serial, "last_diag", None), code_int)
+        self.diag = info
+        return info, result
+
+    def sched_get(self) -> Tuple[Dict[str, Any], Any]:
+        handler = getattr(self._serial, "sched_get", None)
+        if handler is None:
+            raise NotImplementedError("Transport does not support scheduling")
+        result = handler()
+        info = self._build_info(getattr(self._serial, "last_diag", None), None)
+        self.diag = info
+        return info, result
+
+    def sched_remove(self, code: Union[InavMSP, int]) -> Tuple[Dict[str, Any], Any]:
+        handler = getattr(self._serial, "sched_remove", None)
+        if handler is None:
+            # fall back to sched_set delay<=0 if available
+            handler_set = getattr(self._serial, "sched_set", None)
+            if handler_set is None:
+                raise NotImplementedError("Transport does not support scheduling")
+            return self.sched_set(code, delay=0.0)
+        code_int = int(code.value if isinstance(code, InavMSP) else code)
+        result = handler(code_int)
+        info = self._build_info(getattr(self._serial, "last_diag", None), code_int)
+        self.diag = info
+        return info, result
+
     # ----- API surface -----
 
-    def get_api_version(self) -> Dict[str, int]:
-        rep = self._request_unpack(InavMSP.MSP_API_VERSION)
-        return {
+    def get_api_version(self) -> Tuple[Dict[str, Any], Dict[str, int]]:
+        info, rep = self._request(InavMSP.MSP_API_VERSION)
+        return info, {
             "mspProtocolVersion": rep["mspProtocolVersion"],
             "apiVersionMajor": rep["apiVersionMajor"],
             "apiVersionMinor": rep["apiVersionMinor"],
         }
 
-    def get_fc_variant(self) -> Dict[str, str]:
-        rep = self._request_unpack(InavMSP.MSP_FC_VARIANT)
+    def get_fc_variant(self) -> Tuple[Dict[str, Any], Dict[str, str]]:
+        info, rep = self._request(InavMSP.MSP_FC_VARIANT)
         identifier = rep["fcVariantIdentifier"].rstrip(b"\x00").decode("ascii", errors="ignore")
-        return {"fcVariantIdentifier": identifier}
+        return info, {"fcVariantIdentifier": identifier}
 
-    def get_board_info(self) -> Dict[str, Any]:
-        rep = self._request_unpack(InavMSP.MSP_BOARD_INFO)
+    def get_board_info(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        info, rep = self._request(InavMSP.MSP_BOARD_INFO)
         board_identifier = rep["boardIdentifier"].rstrip(b"\x00").decode("ascii", errors="ignore")
         target_name = rep["targetName"].rstrip(b"\x00").decode("ascii", errors="ignore")
         comm_capabilities = rep["commCapabilities"]
-        return {
+        return info, {
             "boardIdentifier": board_identifier,
             "hardwareRevision": rep["hardwareRevision"],
             "osdSupport": rep["osdSupport"],
@@ -149,8 +266,8 @@ class MSPApi:
             "targetName": target_name,
         }
 
-    def get_sensor_config(self) -> Dict[str, InavEnums]:
-        rep = self._request_unpack(InavMSP.MSP_SENSOR_CONFIG)
+    def get_sensor_config(self) -> Tuple[Dict[str, Any], Dict[str, InavEnums]]:
+        info, rep = self._request(InavMSP.MSP_SENSOR_CONFIG)
         sensor_enums = {
             "accHardware": InavEnums.accelerationSensor_e,
             "baroHardware": InavEnums.baroSensor_e,
@@ -163,16 +280,16 @@ class MSPApi:
         for key, enum_cls in sensor_enums.items():
             if key in rep:
                 converted[key] = enum_cls(rep[key])
-        return converted
+        return info, converted
 
-    def get_box_ids(self) -> List[int]:
-        rep = self._request_unpack(InavMSP.MSP_BOXIDS)
-        return list(rep["boxIds"])
+    def get_box_ids(self) -> Tuple[Dict[str, Any], List[int]]:
+        info, rep = self._request(InavMSP.MSP_BOXIDS)
+        return info, list(rep["boxIds"])
 
-    def get_mode_ranges(self) -> List[Dict[str, Any]]:
+    def get_mode_ranges(self) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         if not self.box_ids:
-            self.box_ids = self.get_box_ids()
-        entries = self._request_unpack(InavMSP.MSP_MODE_RANGES)
+            _, self.box_ids = self.get_box_ids()
+        info, entries = self._request(InavMSP.MSP_MODE_RANGES)
         min_pwm = InavDefines.CHANNEL_RANGE_MIN
         step_width = InavDefines.CHANNEL_RANGE_STEP_WIDTH
         summary: List[Dict[str, Any]] = []
@@ -199,10 +316,10 @@ class MSPApi:
                     "pwmRange": (pwm_start, pwm_end),
                 }
             )
-        return summary
+        return info, summary
 
-    def get_rx_map(self) -> Dict[str, Any]:
-        rep = self._request_unpack(InavMSP.MSP_RX_MAP)
+    def get_rx_map(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        info, rep = self._request(InavMSP.MSP_RX_MAP)
         rc_map = list(rep.get("rcMap"))
         decoded= {}
         for idx, mapped_idx in enumerate(rc_map):
@@ -213,12 +330,12 @@ class MSPApi:
                     "mappedTo": mapped_idx
                 }
         self.rxmap = decoded
-        return decoded
+        return info, decoded
 
-    def get_inav_status(self) -> Dict[str, Any]:
-        rep = self._request_unpack(InavMSP.MSP2_INAV_STATUS)
+    def get_inav_status(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        info, rep = self._request(InavMSP.MSP2_INAV_STATUS)
         if not self.box_ids:
-            self.box_ids = self.get_box_ids()
+            _, self.box_ids = self.get_box_ids()
         active_modes_bits = rep["activeModes"]
         active_modes: List[Dict[str, Any]] = []
         for idx, permanent_id in enumerate(self.box_ids):
@@ -239,7 +356,7 @@ class MSPApi:
         ]
         sensor_status_raw = rep["sensorStatus"]
         sensor_status = [sensor for sensor in InavEnums.sensors_e if sensor_status_raw & sensor.value]
-        return {
+        return info, {
             "cycleTime": rep["cycleTime"],
             "i2cErrors": rep["i2cErrors"],
             "sensorStatus": {
@@ -256,11 +373,11 @@ class MSPApi:
             "mixerProfile": rep["mixerProfile"],
         }
 
-    def get_inav_analog(self) -> Dict[str, Any]:
-        rep = self._request_unpack(InavMSP.MSP2_INAV_ANALOG)
+    def get_inav_analog(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        info, rep = self._request(InavMSP.MSP2_INAV_ANALOG)
         battery_flags_raw = rep["batteryFlags"]
         battery_state = InavEnums.batteryState_e((battery_flags_raw >> 2) & 0x3)
-        return {
+        return info, {
             "batteryFlags": {
                 "raw": battery_flags_raw,
                 "fullOnPlugIn": bool(battery_flags_raw & 0x1),
@@ -278,9 +395,9 @@ class MSPApi:
             "rssi": rep["rssi"],
         }
 
-    def get_rx_config(self) -> Dict[str, Any]:
-        rep = self._request_unpack(InavMSP.MSP_RX_CONFIG)
-        return {
+    def get_rx_config(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        info, rep = self._request(InavMSP.MSP_RX_CONFIG)
+        return info, {
             "serialRxProvider": InavEnums.rxSerialReceiverType_e(rep["serialRxProvider"]),
             "maxCheck": rep["maxCheck"],
             "midRc": rep["midRc"],
@@ -298,10 +415,10 @@ class MSPApi:
             "receiverType": InavEnums.rxReceiverType_e(rep["receiverType"]),
         }
 
-    def get_logic_conditions(self) -> List[Dict[str, Any]]:
+    def get_logic_conditions(self) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         # causes *** stack smashing detected ***: terminated
         # why?
-        reps = self._request_unpack(InavMSP.MSP2_INAV_LOGIC_CONDITIONS)
+        info, reps = self._request(InavMSP.MSP2_INAV_LOGIC_CONDITIONS)
         if isinstance(reps, Mapping):
             reps = [reps]  # defensive; schema should yield list
         conditions: List[Dict[str, Any]] = []
@@ -326,46 +443,47 @@ class MSPApi:
                     },
                 }
             )
-        return conditions
+        return info, conditions
 
-    def get_attitude(self) -> Dict[str, float]:
-        rep = self._request_unpack(InavMSP.MSP_ATTITUDE)
-        return {axis: rep[axis] / 10.0 for axis in ("roll", "pitch", "yaw")}
+    def get_attitude(self) -> Tuple[Dict[str, Any], Dict[str, float]]:
+        info, rep = self._request(InavMSP.MSP_ATTITUDE)
+        return info, {axis: rep[axis] / 10.0 for axis in ("roll", "pitch", "yaw")}
 
-    def get_altitude(self) -> Dict[str, float]:
-        rep = self._request_unpack(InavMSP.MSP_ALTITUDE)
-        return {
+    def get_altitude(self) -> Tuple[Dict[str, Any], Dict[str, float]]:
+        info, rep = self._request(InavMSP.MSP_ALTITUDE)
+        return info, {
             "estimatedAltitude": rep["estimatedAltitude"] / 100.0,
             "variometer": rep["variometer"] / 100.0,
             "baroAltitude": rep["baroAltitude"] / 100.0,
         }
 
-    def get_imu(self) -> Dict[str, Dict[str, float]]:
-        rep = self._request_unpack(InavMSP.MSP_RAW_IMU)
+    def get_imu(self) -> Tuple[Dict[str, Any], Dict[str, Dict[str, float]]]:
+        info, rep = self._request(InavMSP.MSP_RAW_IMU)
         axes = ("X", "Y", "Z")
-        return {
+        return info, {
             "acc": {axis: rep[f"acc{axis}"] / 512.0 for axis in axes},
             "gyro": {axis: rep[f"gyro{axis}"] for axis in axes},
             "mag": {axis: rep[f"mag{axis}"] for axis in axes},
         }
 
-    def get_rc_channels(self) -> List[int]:
-        payload = self._request_raw(InavMSP.MSP_RC)
+    def get_rc_channels(self) -> Tuple[Dict[str, Any], List[int]]:
+        info, payload = self._request_raw(InavMSP.MSP_RC)
         channel_width = 2
         if len(payload) % channel_width:
             raise ValueError("RC payload not aligned to 16-bit channel width")
         channel_count = len(payload) // channel_width
-        return list(struct.unpack(f"<{channel_count}H", payload)) if channel_count else []
+        values = list(struct.unpack(f"<{channel_count}H", payload)) if channel_count else []
+        return info, values
         
-    def set_rc_channels(self, channels: Sequence[int]) -> Mapping[str, Any]:
+    def set_rc_channels(self, channels: Sequence[int]) -> Tuple[Dict[str, Any], Mapping[str, Any]]:
         if not channels:
             raise ValueError("channels must not be empty")
         payload = struct.pack(f"<{len(channels)}H", *channels)
-        return self._request_unpack(InavMSP.MSP_SET_RAW_RC, payload)
+        return self._request(InavMSP.MSP_SET_RAW_RC, payload)
 
-    def get_battery_config(self) -> Dict[str, Any]:
-        rep = self._request_unpack(InavMSP.MSP2_INAV_BATTERY_CONFIG)
-        return {
+    def get_battery_config(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        info, rep = self._request(InavMSP.MSP2_INAV_BATTERY_CONFIG)
+        return info, {
             "vbatScale": rep["vbatScale"],
             "vbatSource": InavEnums.batVoltageSource_e(rep["vbatSource"]),
             "cellCount": rep["cellCount"],
@@ -381,10 +499,10 @@ class MSPApi:
             "capacityUnit": InavEnums.batCapacityUnit_e(rep["capacityUnit"]),
         }
 
-    def get_gps_statistics(self) -> Dict[str, float]:
-        rep = self._request_unpack(InavMSP.MSP_GPSSTATISTICS)
+    def get_gps_statistics(self) -> Tuple[Dict[str, Any], Dict[str, float]]:
+        info, rep = self._request(InavMSP.MSP_GPSSTATISTICS)
         packet_count = max(rep["packetCount"], 1)
-        return {
+        return info, {
             "lastMessageDt": rep["lastMessageDt"] / 1000.0,
             "errors": rep["errors"] / packet_count,
             "timeouts": rep["timeouts"] / packet_count,
@@ -393,10 +511,10 @@ class MSPApi:
             "epv": rep["epv"] / 100.0,
         }
 
-    def get_waypoint_info(self) -> Dict[str, Any]:
-        rep = self._request_unpack(InavMSP.MSP_WP_GETINFO)
+    def get_waypoint_info(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        info, rep = self._request(InavMSP.MSP_WP_GETINFO)
         mission_valid = bool(rep["missionValid"])
-        info = {
+        payload = {
             "wpCapabilities": rep["wpCapabilities"],
             "maxWaypoints": rep["maxWaypoints"],
             "missionValid": mission_valid,
@@ -404,13 +522,13 @@ class MSPApi:
         }
         if mission_valid:
             remaining = rep["maxWaypoints"] - rep["waypointCount"]
-            info["waypointsRemaining"] = max(remaining, 0)
-        return info
+            payload["waypointsRemaining"] = max(remaining, 0)
+        return info, payload
 
-    def get_raw_gps(self) -> Dict[str, Any]:
-        rep = self._request_unpack(InavMSP.MSP_RAW_GPS)
+    def get_raw_gps(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        info, rep = self._request(InavMSP.MSP_RAW_GPS)
         ground_course = rep["groundCourse"] / 10.0 if "groundCourse" in rep else rep["speed"] / 10.0
-        return {
+        return info, {
             "fixType": InavEnums.gpsFixType_e(rep["fixType"]),
             "numSat": rep["numSat"],
             "latitude": rep["latitude"] / 1e7,
@@ -432,7 +550,7 @@ class MSPApi:
         param2: int = 0,
         param3: int = 0,
         flag: int = 0,
-    ) -> Mapping[str, Any]:
+    ) -> Tuple[Dict[str, Any], Mapping[str, Any]]:
         payload = self._pack_request(
             InavMSP.MSP_SET_WP,
             {
@@ -447,12 +565,12 @@ class MSPApi:
                 "flag": flag,
             },
         )
-        return self._request_unpack(InavMSP.MSP_SET_WP, payload)
+        return self._request(InavMSP.MSP_SET_WP, payload)
 
-    def get_waypoint(self, waypoint_index: int) -> Dict[str, Any]:
+    def get_waypoint(self, waypoint_index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         payload = self._pack_request(InavMSP.MSP_WP, {"waypointIndex": waypoint_index})
-        rep = self._request_unpack(InavMSP.MSP_WP, payload)
-        return {
+        info, rep = self._request(InavMSP.MSP_WP, payload)
+        return info, {
             "waypointIndex": rep["waypointIndex"],
             "action": InavEnums.navWaypointActions_e(rep["action"]),
             "latitude": rep["latitude"] / 1e7,
@@ -464,9 +582,9 @@ class MSPApi:
             "flag": rep["flag"],
         }
 
-    def get_nav_status(self) -> Dict[str, Any]:
-        rep = self._request_unpack(InavMSP.MSP_NAV_STATUS)
-        return {
+    def get_nav_status(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        info, rep = self._request(InavMSP.MSP_NAV_STATUS)
+        return info, {
             "navMode": InavEnums.navSystemStatus_Mode_e(rep["navMode"]),
             "navState": InavEnums.navigationFSMState_t(rep["navState"]),
             "activeWaypoint": {
@@ -493,7 +611,7 @@ class MSPApi:
         battery_voltage: float,
         airspeed: float,
         ext_flags: int,
-    ) -> Mapping[str, Any]:
+    ) -> Tuple[Dict[str, Any], Mapping[str, Any]]:
         gps_fix_type = int(gps["fix_type"])
         gps_num_sat = int(gps["num_sat"])
         gps_lat = _scale(gps["lat"], 1e7)
@@ -546,9 +664,119 @@ class MSPApi:
                 "extFlags": ext_flags,
             },
         )
-        raw_reply = self._request_raw(InavMSP.MSP_SIMULATOR, payload)
+        info, raw_reply = self._request_raw(InavMSP.MSP_SIMULATOR, payload)
         if not raw_reply:
-            return {}
-        return self._codec.unpack_reply(InavMSP.MSP_SIMULATOR, raw_reply)
+            return info, {}
+        return info, self._codec.unpack_reply(InavMSP.MSP_SIMULATOR, raw_reply)
+
+
+class MSPServerTransport:
+    """TCP transport that speaks the JSON/line protocol exposed by msp_server.py."""
+
+    def __init__(self, host: str, port: int, *, client_id: Optional[str] = None) -> None:
+        self.host = host
+        self.port = port
+        self.client_id = client_id
+        self._sock: Optional[socket.socket] = None
+        self._reader: Optional[Any] = None
+        self.last_diag: Optional[Dict[str, Any]] = None
+
+    def open(self) -> None:
+        if self._sock:
+            return
+        self._sock = socket.create_connection((self.host, self.port))
+        self._reader = self._sock.makefile("r", encoding="utf-8")
+
+    def close(self) -> None:
+        if self._reader:
+            try:
+                self._reader.close()
+            except Exception:
+                pass
+            self._reader = None
+        if self._sock:
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+            self._sock = None
+
+    def _ensure_open(self) -> None:
+        if not self._sock or not self._reader:
+            self.open()
+
+    def _send(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_open()
+        payload.setdefault("id", uuid.uuid4().hex)
+        if self.client_id:
+            payload.setdefault("client_id", self.client_id)
+        data = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n"
+        assert self._sock and self._reader
+        self._sock.sendall(data)
+        line = self._reader.readline()
+        if not line:
+            raise RuntimeError("MSP server closed the connection")
+        resp = json.loads(line)
+        if resp.get("id") != payload["id"]:
+            raise RuntimeError("Mismatched response ID from server")
+        return resp
+
+    def request(
+        self,
+        code: int,
+        payload: bytes = b"",
+        timeout: float = 1.0,
+        force_version: Optional[int] = None,
+        cacheable: bool = True,
+    ) -> Tuple[int, bytes]:
+        message: Dict[str, Any] = {
+            "code": int(code),
+            "timeout_ms": max(100, int(timeout * 1000)),
+            "raw": base64.b64encode(payload or b"").decode("ascii"),
+        }
+        if not cacheable:
+            message["no_cache"] = True
+        resp = self._send(message)
+        if not resp.get("ok"):
+            raise RuntimeError(resp.get("error") or "MSP server error")
+        payload_b64 = resp.get("payload_b64", "")
+        decoded = base64.b64decode(payload_b64) if payload_b64 else b""
+        self.last_diag = resp.get("diag")
+        return resp.get("code", int(code)), decoded
+
+    def sched_set(
+        self,
+        code: int,
+        delay: float,
+        payload: Optional[Mapping[str, Any]] = None,
+        timeout: float = 1.0,
+    ) -> Dict[str, Any]:
+        message: Dict[str, Any] = {
+            "action": "sched_set",
+            "code": int(code),
+            "delay": float(delay),
+            "timeout_ms": max(100, int(timeout * 1000)),
+        }
+        if payload is not None:
+            message["payload"] = payload
+        resp = self._send(message)
+        if not resp.get("ok"):
+            raise RuntimeError(resp.get("error") or "Scheduler error")
+        self.last_diag = resp.get("diag")
+        return resp.get("schedule", {})
+
+    def sched_get(self) -> Dict[str, Any]:
+        resp = self._send({"action": "sched_get"})
+        if not resp.get("ok"):
+            raise RuntimeError(resp.get("error") or "Scheduler error")
+        self.last_diag = resp.get("diag")
+        return resp.get("schedules", {})
+
+    def sched_remove(self, code: int) -> Dict[str, Any]:
+        resp = self._send({"action": "sched_remove", "code": int(code)})
+        if not resp.get("ok"):
+            raise RuntimeError(resp.get("error") or "Scheduler error")
+        self.last_diag = resp.get("diag")
+        return resp
 
     

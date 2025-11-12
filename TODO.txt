@@ -1,0 +1,32 @@
+1. implement so that clients can have their own string IDs for identification in the server; ie: "jetson", "pi-navigation", "test", etc. These IDs are stored with a unique ID with the client's information (hostname, address, port, public key (not implemented yet), etc) same as any API server usually would.
+
+2. Implement message scheduler in server. Similar to mavlink, we want certain messages to run at fixed intervals. Schedulers are keyed by the message code. 
+* Timers are set in seconds (1.0 = every 1 second, 60.0 = every minute, 0.1 = 10HZ, etc.)
+* Only one timer per code can be set. 
+
+api.sched_set(msg=MSP_EXAMPLE, delay=1.0, payload=None)
+api.sched_get()
+>>> {
+    "MSP_EXAMPLE": {"delay": 1.0, "payload": None, "last_time": 1234567890.123}
+}
+the server automatically sends these messages every interval and caches the replies same as if a client had requested it.
+
+3. api.sched_remove(MSP_CODE)
+
+
+5. example_client and other clients should only contain example/user specific code and import necessary API functions (ie: MSPServerTransport) from msp_api.py
+
+6. function calls should be like:
+_, sensor_config = api.get_sensor_config()
+or
+info, sensor_config = api.get_sensor_config()
+instead of calling _print_diag
+info contains information for this call (latency, delay, cached, scheduled, cache age)
+
+
+4. client queues in case of long delay/dropout (cant remember if this is in already)
+
+
+7. server diag should contain length of queues for this client, total number of messages queued
+
+8. "cache ttl" is time delay after which a new one must be fetched if demanded, but cache should not be deleted (always preserve last response)

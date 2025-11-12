@@ -6,7 +6,7 @@ import lib.boxes as boxes
 from mspcodec import MSPCodec
 from msp_serial import *
 codec = MSPCodec.from_json_file("lib/msp_messages.json")
-fc = MSPSerial("/dev/ttyACM0", 115200, read_timeout=0.05)
+fc = MSPSerial("/dev/ttyACM0", 115200, read_timeout=0.05, keepalive_code=int(InavMSP.MSP_API_VERSION))
 fc.open()
 
 # IMPORTANT:

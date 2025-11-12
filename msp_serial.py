@@ -58,6 +58,7 @@ class MSPMessage:
     code: int        # 0..65535
     payload: bytes
 
+
 # ------------------------
 # Parser state machine
 # ------------------------
@@ -309,7 +310,7 @@ class MSPSerial:
     MSP transport over a serial port or TCP socket:
       - open()/close()
       - send(code, payload=b'', force_version=None)
-      - request(code, payload=b'', timeout=1.0, force_version=None) -> (code, payload, version)
+      - request(code, payload=b'', timeout=1.0, force_version=None) -> MSPReply
 
     Background reader thread parses V1/V2 frames and pushes them
     into a per-code queue (and an "all" queue) for matching.
@@ -323,6 +324,13 @@ class MSPSerial:
         min_gap_s: float = 0.005,
         rx_queue_size: int = 1024,
         tcp: bool = False,
+        *,
+        keepalive_code: Optional[int] = None,
+        keepalive_payload: bytes = b"",
+        keepalive_interval: float = 5.0,
+        keepalive_timeout: float = 1.0,
+        max_retries: int = 3,
+        reconnect_delay: float = 0.5,
     ) -> None:
         """
         port: serial device path (e.g. '/dev/ttyACM0') or host:port for TCP when tcp=True
@@ -334,6 +342,12 @@ class MSPSerial:
         self.write_timeout = write_timeout
         self.min_gap_s = max(0.0, float(min_gap_s))
         self._use_tcp = tcp
+        self._keepalive_code = int(keepalive_code) if keepalive_code is not None else None
+        self._keepalive_payload = bytes(keepalive_payload)
+        self._keepalive_interval = max(0.0, float(keepalive_interval)) if keepalive_code is not None else 0.0
+        self._keepalive_timeout = max(0.1, float(keepalive_timeout))
+        self._max_retries = max(1, int(max_retries))
+        self._reconnect_delay = max(0.1, float(reconnect_delay))
 
         self._ser: Optional[serial.SerialBase] = None  # type: ignore[attr-defined]
         self._rx_thread: Optional[threading.Thread] = None
@@ -351,8 +365,13 @@ class MSPSerial:
         # Locks
         self._wlock = threading.Lock()
         self._q_lock = threading.Lock()
+        self._request_lock = threading.Lock()
+        self._running_keepalive = False
 
         self._last_write_ts = 0.0
+        self._last_activity = time.monotonic()
+        self.last_diag: Optional[Dict[str, Any]] = None
+        self._reconnects = 0
 
     # ---------- lifecycle ----------
 
@@ -397,12 +416,14 @@ class MSPSerial:
         self._stop_evt.clear()
         self._rx_thread = threading.Thread(target=self._reader_loop, name="MSPSerialReader", daemon=True)
         self._rx_thread.start()
+        self._last_activity = time.monotonic()
 
     def close(self) -> None:
         self._stop_evt.set()
         if self._rx_thread and self._rx_thread.is_alive():
             self._rx_thread.join(timeout=1.0)
         self._rx_thread = None
+        self._running_keepalive = False
 
         if self._ser:
             try:
@@ -443,6 +464,7 @@ class MSPSerial:
             n = self._ser.write(frame)
             self._ser.flush()  # push to driver
             self._last_write_ts = time.monotonic()
+            self._last_activity = self._last_write_ts
             return n
 
     def request(
@@ -454,27 +476,64 @@ class MSPSerial:
     ) -> Tuple[int, bytes]:
         """
         Send a frame and wait for the matching response (same code coming FROM FC).
-        Returns (code, payload, version). Raises TimeoutError on no response.
+        Returns (code, payload) and raises on transport failures.
         """
-        # Ensure per-code queue exists
-        q = self._get_queue_for_code(code)
+        if payload is None:
+            payload = b""
+        if not isinstance(payload, (bytes, bytearray)):
+            raise TypeError("payload must be bytes or bytearray")
+        payload_bytes = bytes(payload)
 
-        # Send
-        self.send(code, payload, force_version=force_version)
+        with self._request_lock:
+            last_error: Optional[Exception] = None
+            for attempt in range(1, self._max_retries + 1):
+                start_time = time.monotonic()
+                try:
+                    self._ensure_open()
+                    rsp_code, rsp_payload = self._request_core(
+                        int(code), payload_bytes, timeout, force_version
+                    )
+                    self._last_activity = time.monotonic()
+                    duration_ms = (time.monotonic() - start_time) * 1000.0
+                    self.last_diag = {
+                        "code": rsp_code,
+                        "duration_ms": duration_ms,
+                        "cached": False,
+                        "cache_age_ms": None,
+                        "scheduled": False,
+                        "schedule_delay": None,
+                        "attempt": attempt,
+                        "transport": "serial",
+                        "timestamp": time.time(),
+                    }
+                    return rsp_code, rsp_payload
+                except TimeoutError as exc:
+                    last_error = exc
+                    self.last_diag = {
+                        "code": int(code),
+                        "error": str(exc),
+                        "duration_ms": None,
+                        "cached": False,
+                        "cache_age_ms": None,
+                        "scheduled": False,
+                        "schedule_delay": None,
+                        "attempt": attempt,
+                        "transport": "serial",
+                        "timestamp": time.time(),
+                    }
+                    if attempt >= self._max_retries or not self._retry_connection(attempt):
+                        raise
+                except (serial.SerialException, OSError, RuntimeError) as exc:
+                    last_error = exc
+                    if attempt >= self._max_retries or not self._retry_connection(attempt):
+                        break
+                except Exception as exc:
+                    last_error = exc
+                    break
 
-        # Wait for matching response
-        end = time.monotonic() + max(0.0, float(timeout))
-        while True:
-            remaining = end - time.monotonic()
-            if remaining <= 0.0:
-                raise TimeoutError(f"MSP request timeout for code {code}")
-            try:
-                msg: MSPMessage = q.get(timeout=remaining)
-            except Empty:
-                raise TimeoutError(f"MSP request timeout for code {code}")
-            # Safety: only accept FROM FC (direction is implicitly from parser)
-            # Our parser pushes only complete frames; we match by code here.
-            return (msg.code, msg.payload)
+            if last_error:
+                raise last_error
+            raise RuntimeError("MSP transport failure")
 
     # ---------- internals ----------
 
@@ -489,6 +548,7 @@ class MSPSerial:
                 if not chunk:
                     # Timeout tick; just loop
                     continue
+                self._last_activity = time.monotonic()
                 messages = self._parser.feed(chunk)
                 for msg in messages:
                     self._dispatch(msg)
@@ -533,6 +593,84 @@ class MSPSerial:
                 q = Queue(maxsize=64)
                 self._rx_by_code[code] = q
             return q
+
+    @property
+    def reconnects(self) -> int:
+        return self._reconnects
+
+    def _ensure_open(self) -> None:
+        if not self._ser or not self._ser.is_open:
+            self.open()
+
+    def _retry_connection(self, attempt: int) -> bool:
+        try:
+            self.close()
+        except Exception:
+            pass
+        time.sleep(self._reconnect_delay * attempt)
+        try:
+            self.open()
+            self._reconnects += 1
+            return True
+        except Exception:
+            return False
+
+    def _request_core(
+        self,
+        code: int,
+        payload: bytes,
+        timeout: float,
+        force_version: Optional[int],
+        *,
+        suppress_keepalive: bool = False,
+    ) -> Tuple[int, bytes]:
+        if not suppress_keepalive:
+            self._run_keepalive_if_needed()
+
+        q = self._get_queue_for_code(code)
+        self.send(code, payload, force_version=force_version)
+
+        end = time.monotonic() + max(0.0, float(timeout))
+        while True:
+            remaining = end - time.monotonic()
+            if remaining <= 0.0:
+                raise TimeoutError(f"MSP request timeout for code {code}")
+            try:
+                msg: MSPMessage = q.get(timeout=remaining)
+            except Empty:
+                raise TimeoutError(f"MSP request timeout for code {code}")
+            return (msg.code, msg.payload)
+
+    def _run_keepalive_if_needed(self) -> None:
+        if (
+            self._keepalive_code is None
+            or self._keepalive_interval <= 0
+            or self._running_keepalive
+        ):
+            return
+        try:
+            self._ensure_open()
+        except Exception:
+            return
+        now = time.monotonic()
+        if now - self._last_activity < self._keepalive_interval:
+            return
+
+        self._running_keepalive = True
+        try:
+            self._request_core(
+                self._keepalive_code,
+                self._keepalive_payload,
+                self._keepalive_timeout,
+                None,
+                suppress_keepalive=True,
+            )
+        except Exception:
+            # Let the caller trigger reconnect logic on failure.
+            pass
+        finally:
+            self._last_activity = time.monotonic()
+            self._running_keepalive = False
 
     @staticmethod
     def _choose_version(code: int, payload: bytes, force_version: Optional[int]) -> int:

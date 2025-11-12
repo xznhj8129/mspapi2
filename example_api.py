@@ -28,35 +28,42 @@ def main() -> None:
         tcp_endpoint=args.tcp,
     ) as api:
         print()
-        print("MSP API version:", api.get_api_version())
+        _, api_version = api.get_api_version()
+        print("MSP API version:", api_version)
 
         print()
-        print("Flight controller variant:", api.get_fc_variant())
+        _, fc_variant = api.get_fc_variant()
+        print("Flight controller variant:", fc_variant)
 
         print()
-        print("Board info:", api.get_board_info())
+        _, board_info = api.get_board_info()
+        print("Board info:", board_info)
 
         print()
-        print("Sensor configuration:", api.get_sensor_config())
+        _, sensor_cfg = api.get_sensor_config()
+        print("Sensor configuration:", sensor_cfg)
 
         print()
+        _, mode_ranges = api.get_mode_ranges()
         print("Mode ranges:")
-        for entry in api.get_mode_ranges():
+        for entry in mode_ranges:
             print(entry)
 
         print()
-        status = api.get_inav_status()
+        _, status = api.get_inav_status()
         print("INAV status:", status)
 
         print()
-        analog = api.get_inav_analog()
+        _, analog = api.get_inav_analog()
         print("Analog readings:", analog)
 
         print()
-        print("RX config:", api.get_rx_config())
+        _, rx_config = api.get_rx_config()
+        print("RX config:", rx_config)
 
         print()
-        print("RX map:", api.get_rx_map())
+        _, rx_map = api.get_rx_map()
+        print("RX map:", rx_map)
 
         #skip this until patch, smashes the stack
         #print()
@@ -66,36 +73,43 @@ def main() -> None:
         #        print(condition)
 
         print()
-        print("Attitude:", api.get_attitude())
+        _, attitude = api.get_attitude()
+        print("Attitude:", attitude)
 
         print()
-        print("Altitude:", api.get_altitude())
+        _, altitude = api.get_altitude()
+        print("Altitude:", altitude)
 
         print()
-        print("IMU summary:", api.get_imu())
+        _, imu = api.get_imu()
+        print("IMU summary:", imu)
 
         print()
-        rc_channels = api.get_rc_channels()
+        _, rc_channels = api.get_rc_channels()
         print("RC channels:", rc_channels[:6])
 
         target_channels = rc_channels[:] if rc_channels else [1500, 1500, 1500, 1500]
-        ack = api.set_rc_channels(target_channels)
+        _, ack = api.set_rc_channels(target_channels)
         print("SET_RAW_RC ack:", ack)
 
         print()
-        print("Battery config:", api.get_battery_config())
+        _, bat_cfg = api.get_battery_config()
+        print("Battery config:", bat_cfg)
 
         print()
-        print("GPS statistics:", api.get_gps_statistics())
+        _, gps_stats = api.get_gps_statistics()
+        print("GPS statistics:", gps_stats)
 
         print()
-        print("Waypoint info:", api.get_waypoint_info())
+        _, wp_info = api.get_waypoint_info()
+        print("Waypoint info:", wp_info)
 
         print()
-        print("Raw GPS:", api.get_raw_gps())
+        _, raw_gps = api.get_raw_gps()
+        print("Raw GPS:", raw_gps)
 
         print()
-        set_wp_ack = api.set_waypoint(
+        _, set_wp_ack = api.set_waypoint(
             waypointIndex=1,
             action=InavEnums.navWaypointActions_e.NAV_WP_ACTION_WAYPOINT,
             latitude=1.234,
@@ -105,12 +119,14 @@ def main() -> None:
         print("SET_WP ack:", set_wp_ack)
 
         print()
-        print("Waypoint:", api.get_waypoint(1))
+        _, waypoint = api.get_waypoint(1)
+        print("Waypoint:", waypoint)
 
         print()
-        print("Navigation status:", api.get_nav_status())
+        _, nav_status = api.get_nav_status()
+        print("Navigation status:", nav_status)
 
-        box_ids = api.get_box_ids()
+        _, box_ids = api.get_box_ids()
         active_mode_mask = 0
         for mode in status["activeModes"]:
             box_index = mode.get("boxIndex")

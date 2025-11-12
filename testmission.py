@@ -17,6 +17,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def data(result):
+    if isinstance(result, tuple) and len(result) == 2:
+        return result[1]
+    return result
+
+
 def main() -> None:
     args = parse_args()
     port = None if args.tcp else args.port
@@ -41,19 +47,19 @@ def main() -> None:
 
         print()
         print("Mode ranges:")
-        for entry in api.get_mode_ranges():
+        for entry in data(api.get_mode_ranges()):
             print(entry)
 
         print()
-        status = api.get_inav_status()
+        status = data(api.get_inav_status())
         print("INAV status:", status)
 
         print()
-        analog = api.get_inav_analog()
+        analog = data(api.get_inav_analog())
         print("Analog readings:", analog)
 
         print()
-        print("RX config:", api.get_rx_config())
+        print("RX config:", data(api.get_rx_config()))
 
         #print()
         #print("Logic conditions:")
@@ -62,19 +68,19 @@ def main() -> None:
         #        print(condition)
 
         print()
-        print("Attitude:", api.get_attitude())
+        print("Attitude:", data(api.get_attitude()))
 
         print()
-        print("Altitude:", api.get_altitude())
+        print("Altitude:", data(api.get_altitude()))
 
         print()
-        print("IMU summary:", api.get_imu())
+        print("IMU summary:", data(api.get_imu()))
 
         print()
-        rc_channels = api.get_rc_channels()
+        rc_channels = data(api.get_rc_channels())
         print("RC channels:", rc_channels)
         target_channels = rc_channels[:] if rc_channels else [1500, 1500, 1500, 1500]
-        ack = api.set_rc_channels(target_channels)
+        ack = data(api.set_rc_channels(target_channels))
         print("SET_RAW_RC ack:", ack)
 
         print()
