@@ -23,15 +23,21 @@ Will change quickly while i figure out cleanest way to seperate everything
 * will not block API
 
 ## API (msp_api.py)
-* Encodes/decodes MSP bytes from/to parsed data
+* Encodes/decodes MSP bytes from/to parsed data using msp_codec
+* Provides high level function API for common commands
+
+## Server
 * Message broker, handles multiple client connections
 * uses message queues to queue MSP message requests and responses
 * Programmable fixed interval message scheduler
 * Keeps timing and latency information per message
-* deduplicates messages (identical MSP message at same time will yield same response, hence send only once even if multiple clients request it)
-* does not block waiting for MSP handler response
+ * deduplicates messages (crc32 it, identical MSP message within a small interval (1 sec?) will yield same response, hence send only once even if multiple clients request it)
+ * does not block waiting for MSP handler response
 
-## Client-API connection
+## Client-Server connection
 * Client sends message and checks 
 * JSON packet {"code":int, "payload":{}, "time":int, "client":str} to msgpack
 * sent to TCP socket
+
+scheduler: clients have ability to set timer on a message to send periodically
+message deduping: crc32 message to check similarity of code+payload, check if it's already being sent

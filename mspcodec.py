@@ -126,35 +126,45 @@ class MSPCodec:
         if not ctype_val:
             return None
 
+        inline_array = False
+        inline_length: Optional[int] = None
+        if "[" in ctype_val and ctype_val.endswith("]"):
+            inline_array = True
+            base, size_spec = ctype_val.split("[", 1)
+            ctype_val = base.strip()
+            size_spec = size_spec[:-1].strip()
+            if size_spec.isdigit():
+                parsed = int(size_spec)
+                if parsed > 0:
+                    inline_length = parsed
+
+        def _positive(value: Any) -> Optional[int]:
+            if isinstance(value, int):
+                return value if value > 0 else None
+            if isinstance(value, str) and value.isdigit():
+                parsed_val = int(value)
+                return parsed_val if parsed_val > 0 else None
+            return None
+
+        declared_length = _positive(field.get("array_size"))
+        is_array = bool(field.get("array")) or inline_array or declared_length is not None
+        array_length = inline_length if inline_length is not None else declared_length
+
+        if is_array:
+            base = field.get("array_ctype") or ctype_val
+            base = base.replace("[]", "").strip()
+            if base == "char":
+                if array_length is None:
+                    return None
+                return f"{array_length}s"
+            base_code = bin_type_map.get(base)
+            if base_code is None or array_length is None:
+                return None
+            return f"{array_length}{base_code}"
+
         direct = bin_type_map.get(ctype_val)
         if direct:
             return direct
-
-        if "[" in ctype_val and ctype_val.endswith("]"):
-            base, size_spec = ctype_val.split("[", 1)
-            base = base.strip()
-            size_spec = size_spec[:-1].strip()
-
-            size: Optional[int] = None
-            if size_spec and size_spec.isdigit():
-                size = int(size_spec)
-            else:
-                array_size = field.get("array_size")
-                if isinstance(array_size, int):
-                    size = array_size
-                elif isinstance(array_size, str) and array_size.isdigit():
-                    size = int(array_size)
-
-            if not size or size <= 0:
-                return None
-
-            if base == "char":
-                return f"{size}s"
-
-            base_code = bin_type_map.get(base)
-            if base_code:
-                return f"{size}{base_code}"
-            return None
 
         return None
 
