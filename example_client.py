@@ -44,6 +44,24 @@ def show_info(label: str, info: Dict[str, Any]) -> None:
     if info.get("scheduled"):
         delay = info.get("schedule_delay_s")
         parts.append(f"scheduled@{delay}s" if delay else "scheduled")
+    pending = info.get("pending")
+    if isinstance(pending, int):
+        parts.append(f"pending={pending}")
+    rate = info.get("rate") or {}
+    if rate:
+        cur = rate.get("current_per_sec")
+        limit = rate.get("limit_per_sec")
+        util = rate.get("utilization")
+        throttle = rate.get("throttle_ms")
+        rate_bits = []
+        if cur is not None and limit is not None:
+            rate_bits.append(f"{cur}/{limit}")
+        if isinstance(util, (int, float)):
+            rate_bits.append(f"util={util:.2f}")
+        if isinstance(throttle, (int, float)) and throttle > 0:
+            rate_bits.append(f"throttle={throttle:.0f}ms")
+        if rate_bits:
+            parts.append("rate=" + " ".join(rate_bits))
     avg = (info.get("code_stats") or {}).get("avg_ms")
     if isinstance(avg, (int, float)):
         parts.append(f"avg={avg:.2f}ms")
@@ -57,6 +75,9 @@ def show_info(label: str, info: Dict[str, Any]) -> None:
     recon = server.get("reconnections")
     if recon is not None:
         parts.append(f"reconnects={recon}")
+    queue_total = server.get("inflight_total")
+    if isinstance(queue_total, int):
+        parts.append(f"queue_total={queue_total}")
     if parts:
         print(f"  {label} info: ", ", ".join(parts))
 
@@ -68,6 +89,11 @@ def main() -> None:
     api = MSPApi(port=None, serial_transport=transport)
     api.open()
     try:
+
+        info, schedules = api.sched_get()
+        print("Scheduler updated:", schedules)
+        show_info("sched_get", info)
+        
         info, api_version = api.get_api_version()
         print("\nMSP API version:", api_version)
         show_info("MSP_API_VERSION", info)
@@ -198,10 +224,6 @@ def main() -> None:
         info, _ = api.sched_set(InavMSP.MSP_API_VERSION, delay=5.0)
         print("Setting MSP_API_VERSION poll every 5s")
         show_info("sched_set", info)
-
-        info, schedules = api.sched_get()
-        print("Scheduler updated:", schedules)
-        show_info("sched_get", info)
 
         info, _ = api.sched_remove(InavMSP.MSP_API_VERSION)
         print("Removing MSP_API_VERSION schedule")

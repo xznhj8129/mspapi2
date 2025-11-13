@@ -7,8 +7,8 @@ Clean rewrite of an API for MultiWii Serial Protocol for [BetaFlight](https://gi
 * Uses canonical INAV MSP definition JSON from [msp-documentation](https://github.com/xznhj8129/msp_documentation) for API generation
 * Direct use of source code enums and defines wherever possible
 * Focus on parsing and converting actual flight controller code into API functions, not re-re-re-reimplementing stuff
-* Use parsed and interpreted direct source information to generate documentation (see msp-documentation)
-* Will implement robust asynchronous non-blocking message brokering for single-serial connection handler shared between multiple clients (multiprocessing or zeromq)
+* Uses parsed and interpreted direct source information to generate documentation (see msp-documentation)
+* Includes a robust asynchronous broker (TCP server + shared rate limiting + caching) so many clients can share one FC connection safely
 
 
 Will change quickly while i figure out cleanest way to seperate everything
@@ -45,16 +45,14 @@ Will change quickly while i figure out cleanest way to seperate everything
 * uses message queues to queue MSP message requests and responses
 * Programmable fixed interval message scheduler
 * Keeps timing and latency information per message
- * deduplicates messages (crc32 it, identical MSP message within a small interval (1 sec?) will yield same response, hence send only once even if multiple clients request it)
- * does not block waiting for MSP handler response
+ * deduplicates identical `(code, payload)` requests so multiple clients share a single FC round-trip
+ * rate-limits and queues traffic so the FC isn't overwhelmed, while still keeping every client responsive
 
-## Client-Server connection
-* Client sends message and checks 
-* JSON packet {"code":int, "payload":{}, "time":int, "client":str} to msgpack
-* sent to TCP socket
-
-scheduler: clients have ability to set timer on a message to send periodically
-message deduping: crc32 message to check similarity of code+payload, check if it's already being sent
+## Client-Server connection summary
+* Transport is newline-delimited JSON over TCP (documented below)
+* Clients identify themselves via `client_id` so diagnostics/rate-limit buckets are per-user
+* Scheduler commands (`sched_set`, `sched_get`, `sched_remove`) let clients request periodic polls without spamming the FC
+* Server deduplicates identical `(code, payload)` requests, caches replies, and automatically throttles each client based on the global 200 req/s budget
 
 ## Multi-client MSP server
 
@@ -73,7 +71,8 @@ The server:
 * keeps a single `MSPSerial` instance alive with automatic keep-alives and retries,
 * deduplicates identical `(code, payload)` requests that are in-flight so only one MSP round-trip hits the FC,
 * caches identical requests for `cache_ttl` seconds (default 1 s) so repeated queries can be served immediately,
-* returns both the raw payload (base64) and, when possible, the structured decode using `mspcodec`, along with diagnostic metadata (latency, averages, requests/min, reconnection count, and client info).
+* returns both the raw payload (base64) and, when possible, the structured decode using `mspcodec`, along with diagnostic metadata (latency, averages, requests/min, reconnection count, queue depth, and client info),
+* enforces a global 200 req/s budget split across active clients (rate limit = `200 / clients`), with automatic throttling/queueing; each response’s `diag.client.rate` field reports current utilization and throttle time.
 
 ### Protocol overview
 
@@ -118,15 +117,19 @@ Server replies are also JSON lines:
     "code": 1,
     "duration_ms": 3.21,
     "cached": false,
+    "cache_age_ms": 0,
+    "scheduled": false,
     "code_stats": {"count": 42, "avg_ms": 3.10, "requests_per_min": 12, "last_ms": 3.21},
-    "server": {"requests_total": 420, "reconnections": 1, "requests_per_min": 55},
+    "server": {"requests_total": 420, "reconnections": 1, "requests_per_min": 55,
+               "inflight_total": 3, "rate_limit_per_client": 100},
     "client": {"client_id": "jetson", "session_id": "...", "address": "127.0.0.1", "port": 54321,
-                "connected_at": 1700000000.0, "last_seen": 1700000001.0}
+                "connected_at": 1700000000.0, "last_seen": 1700000001.0, "pending": 0,
+                "rate": {"current_per_sec": 95, "limit_per_sec": 100, "utilization": 0.95, "throttle_ms": 0}}
   }
 }
 ```
 
-In addition to the `data` payload, each response carries a `diag` block with latency information, per-code averages, current requests/minute, and aggregate reconnection counts. The high-level `MSPApi` stores the last response's diagnostics on `api.diag`, so client applications can make decisions without having to parse raw transport data.
+In addition to the `data` payload, each response carries a `diag` block with latency information, per-code averages, queue depth, rate-limit utilization, and per-client/server metadata (pending requests, inflight totals, reconnections, etc.). The high-level `MSPApi` stores the last response's diagnostics on `api.diag`, so client applications can make decisions without having to parse raw transport data.
 
 On failure:
 
@@ -158,5 +161,15 @@ The server can poll specific MSP codes at fixed intervals and keep the responses
 The Python `MSPApi` exposes `sched_set` / `sched_get` / `sched_remove` helpers that forward these commands when the underlying transport supports them (e.g., the TCP proxy used in `example_client.py`). Scheduled polls behave like normal requests: they update the cache, feed into the per-code latency statistics, and appear in `api.diag` for the next client call.
 
 To force a non-cached response for any single request, send `"no_cache": true` (or call the underlying transport with `cacheable=False` as demonstrated in `example_client.py`).
+
+### Stress testing
+
+`stress_tester.py` hammers the server with concurrent MSP API workers and random scheduler mutations (without sending garbage to the FC):
+
+```bash
+python stress_tester.py --host 127.0.0.1 --port 9000 --api-workers 8 --scheduler-workers 4 --duration 60
+```
+
+It uses `MSPServerTransport`/`MSPApi` for legitimate traffic only, focusing on server-side queue/rate-limit behavior. Monitor the server console (now logging full tracebacks to stdout) to see how it copes.
 
 Scheduling/deduplication/publishing hooks live server-side so multiple independent apps (GCS, logging, custom dashboards, etc.) can safely share the FC MSP link. The original `multi.py` still shows the low-level message broker pattern if you need to embed the architecture inside another process.

@@ -15,6 +15,7 @@ import base64
 import json
 import logging
 import signal
+import sys
 import time
 import uuid
 from collections import deque
@@ -25,6 +26,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from lib import InavMSP
 from mspcodec import MSPCodec
 from msp_serial import MSPSerial
+
+
+RATE_LIMIT_TOTAL = 200
 
 
 def _now() -> float:
@@ -116,6 +120,7 @@ class MSPRequestServer:
         self._request_times = deque()
         self._clients: Dict[str, Dict[str, Any]] = {}
         self._client_lock = asyncio.Lock()
+        self._total_inflight = 0
         self._schedulers: Dict[int, Dict[str, Any]] = {}
         self._sched_lock = asyncio.Lock()
         self._scheduler_task: Optional[asyncio.Task] = None
@@ -266,6 +271,7 @@ class MSPRequestServer:
                 if not fut.done():
                     fut.set_result(resp)
         except Exception as exc:
+            logging.exception("Internal dispatch error for code %s", code)
             waiters = await self._pop_inflight(inflight_key)
             for fut in waiters:
                 if not fut.done():
@@ -393,6 +399,8 @@ class MSPRequestServer:
                     )
         except asyncio.CancelledError:
             pass
+        except Exception as exc:
+            logging.exception("Scheduler loop crashed")
 
     def encode_payload(self, code: InavMSP, body: Dict[str, Any]) -> bytes:
         if "raw" in body and body["raw"] is not None:
@@ -459,6 +467,11 @@ class MSPRequestServer:
             return {"session_id": session_id}
         return dict(info)
 
+    def per_client_rate_limit(self) -> int:
+        with_clients = len(self._clients)
+        limit = int(RATE_LIMIT_TOTAL / max(1, with_clients))
+        return max(1, limit)
+
 
 class ClientSession:
     def __init__(self, server: MSPRequestServer, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -469,6 +482,9 @@ class ClientSession:
         self._closed = False
         self.session_id = uuid.uuid4().hex
         self.client_id: Optional[str] = None
+        self._rate_window = deque()
+        self._last_rate: Optional[Dict[str, Any]] = None
+        self._pending = 0
 
     async def run(self) -> None:
         logging.info("Client connected: %s", self.addr)
@@ -516,98 +532,150 @@ class ClientSession:
                 "requests_total": self.server._total_requests,
                 "reconnections": getattr(self.server._serial, "reconnects", 0),
                 "requests_per_min": self.server.requests_per_min(),
+                "inflight_total": self.server._total_inflight,
+                "rate_limit_per_client": self.server.per_client_rate_limit(),
             },
-            "client": self.server.get_client_info(self.session_id),
+            "client": self._client_diag_meta(),
         }
+
+    def _client_diag_meta(self) -> Dict[str, Any]:
+        info = dict(self.server.get_client_info(self.session_id))
+        info["pending"] = self._pending
+        if self._last_rate:
+            info["rate"] = self._last_rate
+        return info
+
+    async def _respect_rate_limit(self) -> None:
+        window = self._rate_window
+        while True:
+            now = _now()
+            window.append(now)
+            cutoff = now - 1.0
+            while window and window[0] < cutoff:
+                window.popleft()
+            current = len(window)
+            limit = self.server.per_client_rate_limit()
+            if current <= limit:
+                self._last_rate = {
+                    "limit_per_sec": limit,
+                    "current_per_sec": current,
+                    "utilization": round(current / limit, 3) if limit else None,
+                    "pending": self._pending,
+                    "throttle_ms": 0,
+                }
+                return
+            window.pop()
+            wait = (window[0] + 1.0 - now) if window else 0.05
+            wait = max(wait, 0.01)
+            self._last_rate = {
+                "limit_per_sec": limit,
+                "current_per_sec": len(window),
+                "throttle_ms": wait * 1000.0,
+                "utilization": round(min(len(window), limit) / limit, 3) if limit else None,
+                "pending": self._pending,
+            }
+            await asyncio.sleep(wait)
 
     async def _handle_request(self, req: Dict[str, Any]) -> None:
-        req_id = req.get("id")
-        client_label = req.get("client_id")
-        if client_label:
-            new_id = str(client_label)
-            if new_id != self.client_id:
-                self.client_id = new_id
-                logging.info(
-                    "Client session=%s labeled as %s",
-                    self.session_id,
-                    self.client_id,
-                )
-        await self.server.update_client(self.session_id, client_id=self.client_id)
+        await self._respect_rate_limit()
+        self._pending += 1
+        self.server._total_inflight += 1
+        try:
+            req_id = req.get("id")
+            client_label = req.get("client_id")
+            if client_label:
+                new_id = str(client_label)
+                if new_id != self.client_id:
+                    self.client_id = new_id
+                    logging.info(
+                        "Client session=%s labeled as %s",
+                        self.session_id,
+                        self.client_id,
+                    )
+            await self.server.update_client(self.session_id, client_id=self.client_id)
 
-        action = req.get("action")
+            action = req.get("action")
 
-        timeout_ms = max(100.0, float(req.get("timeout_ms", self.server.default_timeout * 1000.0)))
-        timeout = timeout_ms / 1000.0
-        cacheable = not bool(req.get("no_cache"))
+            timeout_ms = max(100.0, float(req.get("timeout_ms", self.server.default_timeout * 1000.0)))
+            timeout = timeout_ms / 1000.0
+            cacheable = not bool(req.get("no_cache"))
 
-        if action:
-            handled = await self._handle_action(str(action).lower(), req, req_id, timeout_ms)
-            if handled:
+            if action:
+                handled = await self._handle_action(str(action).lower(), req, req_id, timeout_ms)
+                if handled:
+                    return
+
+            try:
+                code = MSPRequestServer.resolve_code(req.get("code"))
+            except Exception as exc:
+                await self._send({"id": req_id, "ok": False, "error": str(exc)})
                 return
 
-        try:
-            code = MSPRequestServer.resolve_code(req.get("code"))
-        except Exception as exc:
-            await self._send({"id": req_id, "ok": False, "error": str(exc)})
-            return
+            try:
+                payload = self.server.encode_payload(code, req)
+            except Exception as exc:
+                await self._send({"id": req_id, "ok": False, "error": str(exc)})
+                return
 
-        try:
-            payload = self.server.encode_payload(code, req)
-        except Exception as exc:
-            await self._send({"id": req_id, "ok": False, "error": str(exc)})
-            return
+            try:
+                resp = await self.server.dispatch_request(
+                    code,
+                    payload,
+                    timeout=timeout,
+                    cacheable=cacheable,
+                )
+            except Exception as exc:
+                logging.exception(
+                    "Dispatch failure for client %s request %s", self.session_id, req
+                )
+                await self._send({"id": req_id, "ok": False, "error": str(exc)})
+                return
 
-        try:
-            resp = await self.server.dispatch_request(
-                code,
-                payload,
-                timeout=timeout,
-                cacheable=cacheable,
-            )
-        except Exception as exc:
-            await self._send({"id": req_id, "ok": False, "error": str(exc)})
-            return
+            decoded = self.server.decode_payload(code, resp.payload)
+            self.server._total_requests += 1
+            self.server._request_times.append(_now())
+            requests_per_min = self.server.requests_per_min()
 
-        decoded = self.server.decode_payload(code, resp.payload)
-        self.server._total_requests += 1
-        self.server._request_times.append(_now())
-        requests_per_min = self.server.requests_per_min()
+            try:
+                name = InavMSP(resp.code).name
+            except Exception:
+                name = f"MSP_{resp.code}"
 
-        try:
-            name = InavMSP(resp.code).name
-        except Exception:
-            name = f"MSP_{resp.code}"
+            diag = {
+                "code": resp.code,
+                "duration_ms": resp.duration_ms,
+                "cached": resp.cached,
+                "cache_age_ms": resp.cache_age_ms,
+                "scheduled": resp.scheduled,
+                "schedule_delay": resp.schedule_delay,
+                "code_stats": self.server._code_stats_snapshot(resp.code),
+                "server": {
+                    "requests_total": self.server._total_requests,
+                    "reconnections": getattr(self.server._serial, "reconnects", 0),
+                    "requests_per_min": requests_per_min,
+                    "inflight_total": self.server._total_inflight,
+                    "rate_limit_per_client": self.server.per_client_rate_limit(),
+                },
+            }
+            diag["client"] = self._client_diag_meta()
 
-        diag = {
-            "code": resp.code,
-            "duration_ms": resp.duration_ms,
-            "cached": resp.cached,
-            "cache_age_ms": resp.cache_age_ms,
-            "scheduled": resp.scheduled,
-            "schedule_delay": resp.schedule_delay,
-            "code_stats": self.server._code_stats_snapshot(resp.code),
-            "server": {
-                "requests_total": self.server._total_requests,
-                "reconnections": getattr(self.server._serial, "reconnects", 0),
-                "requests_per_min": requests_per_min,
-            },
-        }
-        diag["client"] = self.server.get_client_info(self.session_id)
-
-        reply: Dict[str, Any] = {
-            "id": req_id,
-            "ok": True,
-            "code": resp.code,
-            "name": name,
-            "payload_b64": base64.b64encode(resp.payload).decode("ascii"),
-            "payload_len": len(resp.payload),
-            "duration_ms": round(resp.duration_ms, 3),
-            "cached": resp.cached,
-            "diag": diag,
-        }
-        if decoded is not None:
-            reply["data"] = _json_safe(decoded)
-        await self._send(reply)
+            reply: Dict[str, Any] = {
+                "id": req_id,
+                "ok": True,
+                "code": resp.code,
+                "name": name,
+                "payload_b64": base64.b64encode(resp.payload).decode("ascii"),
+                "payload_len": len(resp.payload),
+                "duration_ms": round(resp.duration_ms, 3),
+                "cached": resp.cached,
+                "diag": diag,
+            }
+            if decoded is not None:
+                reply["data"] = _json_safe(decoded)
+            await self._send(reply)
+        finally:
+            self._pending = max(self._pending - 1, 0)
+            self.server._total_inflight = max(self.server._total_inflight - 1, 0)
 
     async def _handle_action(self, action: str, req: Dict[str, Any], req_id: Any, timeout_ms: float) -> bool:
         if action == "sched_get":
@@ -663,7 +731,12 @@ def parse_args() -> argparse.Namespace:
 
 
 async def run_server(args: argparse.Namespace) -> None:
-    logging.basicConfig(level=getattr(logging, args.log_level), format="[%(asctime)s] %(levelname)s: %(message)s")
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="[%(asctime)s] %(levelname)s: %(message)s",
+        stream=sys.stdout,
+        force=True,
+    )
     server = MSPRequestServer(
         host=args.host,
         port=args.port,
