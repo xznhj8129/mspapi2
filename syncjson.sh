@@ -1,2 +1,2 @@
 #!/bin/bash
-cp ../msp_documentation/lib/msp_messages.json lib/msp_messages.json
+cp ../msp_documentation/lib/msp_messages.json mspapi2/lib/msp_messages.json

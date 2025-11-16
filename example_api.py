@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import argparse
 
-from lib import InavEnums
-import lib.boxes as boxes
-from msp_api import MSPApi
+from mspapi2.lib import InavEnums
+from mspapi2.msp_api import MSPApi
 import time
 
 def parse_args() -> argparse.Namespace:
@@ -126,26 +125,7 @@ def main() -> None:
         _, nav_status = api.get_nav_status()
         print("Navigation status:", nav_status)
 
-        _, box_ids = api.get_box_ids()
-        active_mode_mask = 0
-        for mode in status["activeModes"]:
-            box_index = mode.get("boxIndex")
-            if box_index is None:
-                continue
-            active_mode_mask |= 1 << box_index
-
-        active_modes = []
-        for idx, permanent_id in enumerate(box_ids):
-            if not (active_mode_mask & (1 << idx)):
-                continue
-            mode_info = boxes.MODEBOXES.get(permanent_id, {})
-            active_modes.append(
-                {
-                    "boxIndex": idx,
-                    "permanentId": permanent_id,
-                    "boxName": mode_info.get("boxName", f"UNKNOWN_{permanent_id}"),
-                }
-            )
+        _, active_modes = api.get_active_modes()
         print("Active modes:", active_modes)
 
         """print()

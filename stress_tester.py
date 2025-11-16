@@ -11,8 +11,8 @@ import random
 import time
 from typing import Any, Callable, Dict, List, Tuple
 
-from lib import InavMSP
-from msp_api import MSPApi, MSPServerTransport
+from mspapi2.lib import InavMSP
+from mspapi2.msp_api import MSPApi, MSPServerTransport
 
 API_CALLS: List[Tuple[str, Callable[[MSPApi], Tuple[Dict[str, Any], Any]]]] = []
 

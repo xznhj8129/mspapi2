@@ -1,11 +1,14 @@
 import struct
 import time
 from typing import Mapping
-from lib import *
-import lib.boxes as boxes
-from mspcodec import MSPCodec
-from msp_serial import *
-codec = MSPCodec.from_json_file("lib/msp_messages.json")
+from mspapi2.lib import *
+from mspapi2.lib import boxes
+from mspapi2.mspcodec import MSPCodec
+from mspapi2.msp_serial import *
+from importlib import resources
+
+codec_schema = resources.files("mspapi2.lib") / "msp_messages.json"
+codec = MSPCodec.from_json_file(str(codec_schema))
 fc = MSPSerial("/dev/ttyACM0", 115200, read_timeout=0.05, keepalive_code=int(InavMSP.MSP_API_VERSION))
 fc.open()
 

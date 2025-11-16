@@ -6,11 +6,10 @@ from __future__ import annotations
 import argparse
 import socket
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from lib import InavEnums, InavMSP
-import lib.boxes as boxes
-from msp_api import MSPApi, MSPServerTransport
+from mspapi2.lib import InavEnums, InavMSP
+from mspapi2.msp_api import MSPApi, MSPServerTransport
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,7 +92,7 @@ def main() -> None:
         info, schedules = api.sched_get()
         print("Scheduler updated:", schedules)
         show_info("sched_get", info)
-        
+
         info, api_version = api.get_api_version()
         print("\nMSP API version:", api_version)
         show_info("MSP_API_VERSION", info)
@@ -187,28 +186,9 @@ def main() -> None:
         print("\nNavigation status:", nav_status)
         show_info("MSP_NAV_STATUS", info)
 
-        _, box_ids = api.get_box_ids()
-        active_mode_mask = 0
-        raw_modes = status.get("activeModes") or []
-        if isinstance(raw_modes, list):
-            for mode in raw_modes:
-                box_index = mode.get("boxIndex")
-                if box_index is None:
-                    continue
-                active_mode_mask |= 1 << box_index
-        active_modes: List[Dict[str, Any]] = []
-        for idx, permanent_id in enumerate(box_ids):
-            if not (active_mode_mask & (1 << idx)):
-                continue
-            box_info = boxes.MODEBOXES.get(permanent_id, {})
-            active_modes.append(
-                {
-                    "boxIndex": idx,
-                    "permanentId": permanent_id,
-                    "boxName": box_info.get("boxName", f"UNKNOWN_{permanent_id}"),
-                }
-            )
-        print("Active modes:", active_modes)
+        info, active_modes = api.get_active_modes()
+        print("\nActive modes:", active_modes)
+        show_info("get_active_modes", info)
 
         print("\nForced uncached MSP_API_VERSION (no cache):")
         _, raw_payload = transport.request(int(InavMSP.MSP_API_VERSION), cacheable=False)
