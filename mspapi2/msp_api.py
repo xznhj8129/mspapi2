@@ -203,6 +203,33 @@ class MSPApi:
             raise RuntimeError("BOX IDs could not be retrieved")
         return self.box_ids
 
+    def _ensure_rx_map_cached(self) -> Dict[int, Dict[str, Any]]:
+        if self.rxmap is None:
+            self.get_rx_map()
+        if self.rxmap is None:
+            raise RuntimeError("RX map could not be retrieved")
+        return self.rxmap
+
+    def _resolve_channel_index(self, channel: Union[int, str]) -> int:
+        if isinstance(channel, str):
+            rxmap = self._ensure_rx_map_cached()
+            target = channel.strip().lower()
+            for entry in rxmap.values():
+                name = str(entry.get("name", "")).lower()
+                if name == target:
+                    mapped = entry.get("mappedTo")
+                    if mapped is None:
+                        break
+                    return int(mapped)
+            raise KeyError(f"Channel '{channel}' not present in RX map")
+        try:
+            idx = int(channel)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid channel index {channel!r}") from exc
+        if idx < 0:
+            raise ValueError("Channel index must be non-negative")
+        return idx
+
     @staticmethod
     def _active_mode_mask_from_raw(raw_modes: Any) -> int:
         if raw_modes is None:
@@ -496,12 +523,49 @@ class MSPApi:
         channel_count = len(payload) // channel_width
         values = list(struct.unpack(f"<{channel_count}H", payload)) if channel_count else []
         return info, values
+
+    def get_ch(self, channel: Union[int, str]) -> Tuple[Dict[str, Any], int]:
+        """
+        Return the current value for a channel referenced either by numeric index
+        or by the friendly name defined in the RX map (e.g. 'pitch').
+        """
+        idx = self._resolve_channel_index(channel)
+        info, channels = self.get_rc_channels()
+        if idx >= len(channels):
+            raise IndexError(f"Channel index {idx} is out of range for RC payload of size {len(channels)}")
+        return info, channels[idx]
         
-    def set_rc_channels(self, channels: Sequence[int]) -> Tuple[Dict[str, Any], Mapping[str, Any]]:
-        if not channels:
+    def set_rc_channels(self, channels: Union[Sequence[int], Mapping[Union[int, str], int]]) -> Tuple[Dict[str, Any], Mapping[str, Any]]:
+        if isinstance(channels, Mapping):
+            resolved = self._build_channel_frame(channels)
+        else:
+            resolved = [int(value) for value in channels]
+        if not resolved:
             raise ValueError("channels must not be empty")
-        payload = struct.pack(f"<{len(channels)}H", *channels)
+        payload = struct.pack(f"<{len(resolved)}H", *resolved)
         return self._request(InavMSP.MSP_SET_RAW_RC, payload)
+
+    def _build_channel_frame(self, overrides: Mapping[Union[int, str], int]) -> List[int]:
+        if not overrides:
+            raise ValueError("channels must not be empty")
+        resolved: List[Tuple[int, int]] = []
+        max_idx = -1
+        for key, value in overrides.items():
+            idx = self._resolve_channel_index(key)
+            resolved.append((idx, int(value)))
+            if idx > max_idx:
+                max_idx = idx
+        if max_idx < 0:
+            raise ValueError("channels must contain at least one override")
+        _, current = self.get_rc_channels()
+        values = list(current)
+        if not values:
+            values = [1500] * (max_idx + 1)
+        elif len(values) <= max_idx:
+            values.extend([1500] * (max_idx + 1 - len(values)))
+        for idx, value in resolved:
+            values[idx] = value
+        return values
 
     def get_battery_config(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         info, rep = self._request(InavMSP.MSP2_INAV_BATTERY_CONFIG)

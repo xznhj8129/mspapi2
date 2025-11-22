@@ -129,7 +129,7 @@ def main() -> None:
         print("Active modes:", active_modes)
 
         """print()
-        simulator_reply = api.set_simulator(
+        _, simulator_reply = api.set_simulator(
             simulator_version=1,
             flags=(
                 int(InavEnums.simulatorFlags_t.HITL_ENABLE)

@@ -14,6 +14,37 @@ Clean rewrite of an API for MultiWii Serial Protocol for [BetaFlight](https://gi
 Will change quickly while i figure out cleanest way to seperate everything
 
 
+## Installation
+
+```bash
+# from a clone
+pip install .
+
+# or for live development
+pip install -e .
+```
+
+The package name is `mspapi2`. Once installed you can use the console entry point exposed by `setup.py`:
+
+```bash
+# identical to `python -m mspapi2`
+mspapi2-server --help
+mspapi2-server --serial /dev/ttyACM0 --baudrate 115200 --host 0.0.0.0 --port 9000
+```
+
+For programmatic access import the `MSPApi` class:
+
+```python
+from mspapi2 import MSPApi
+
+with MSPApi(port="/dev/ttyACM0") as api:
+    info, version = api.get_api_version()
+    print("Latency (ms):", info["latency_ms"])
+    print("Version:", version)
+```
+
+Channel helpers now honor the RX map. Call `api.get_ch("pitch")` (or any RX-map name) to read the corresponding value, and pass a mapping to `api.set_rc_channels({"pitch": 1600, 2: 1700})` to override specific channels without manually reshuffling indices.
+
 # Architecture:
 ## MSP Handler (msp_serial.py)
 * Single point of contact to FC and only serial socket handler

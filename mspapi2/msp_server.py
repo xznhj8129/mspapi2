@@ -70,6 +70,11 @@ class SerialResponse:
 
 
 class MSPRequestServer:
+    # Requests that should never be cached/deduped, even if payload repeats.
+    NO_CACHE_CODES = {
+        int(InavMSP.MSP_SET_RAW_RC),
+    }
+
     def __init__(
         self,
         *,
@@ -183,6 +188,9 @@ class MSPRequestServer:
         scheduled: bool = False,
         schedule_delay: Optional[float] = None,
     ) -> SerialResponse:
+        if int(code) in self.NO_CACHE_CODES:
+            cacheable = False
+
         key = (int(code), payload)
         now = _now()
 
