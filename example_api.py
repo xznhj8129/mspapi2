@@ -5,6 +5,7 @@ import argparse
 from mspapi2.lib import InavEnums
 from mspapi2.msp_api import MSPApi
 import time
+from typing import Any, Dict
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="MSP API demo")
@@ -14,6 +15,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--read-timeout", type=float, default=0.05, help="Read timeout in seconds")
     parser.add_argument("--write-timeout", type=float, default=0.25, help="Write timeout in seconds")
     return parser.parse_args()
+
+
+def show_info(label: str, info: Dict[str, Any]) -> None:
+    parts = []
+    latency = info.get("latency_ms")
+    if isinstance(latency, (int, float)):
+        parts.append(f"latency={latency:.2f}ms")
+    if info.get("cached") is not None:
+        parts.append(f"cached={info.get('cached')}")
+    cache_age = info.get("cache_age_ms")
+    if isinstance(cache_age, (int, float)):
+        parts.append(f"cache_age={cache_age:.0f}ms")
+    attempt = info.get("attempt")
+    if attempt is not None:
+        parts.append(f"attempt={attempt}")
+    transport = info.get("transport")
+    if transport:
+        parts.append(f"transport={transport}")
+    if parts:
+        print(f"  {label}: " + ", ".join(parts))
 
 
 def main() -> None:
@@ -27,88 +48,99 @@ def main() -> None:
         tcp_endpoint=args.tcp,
     ) as api:
         print()
-        _, api_version = api.get_api_version()
+        info, api_version = api.get_api_version()
         print("MSP API version:", api_version)
+        show_info("MSP_API_VERSION", info)
 
         print()
-        _, fc_variant = api.get_fc_variant()
+        info, fc_variant = api.get_fc_variant()
         print("Flight controller variant:", fc_variant)
+        show_info("MSP_FC_VARIANT", info)
 
         print()
-        _, board_info = api.get_board_info()
+        info, board_info = api.get_board_info()
         print("Board info:", board_info)
+        show_info("MSP_BOARD_INFO", info)
 
         print()
-        _, sensor_cfg = api.get_sensor_config()
+        info, sensor_cfg = api.get_sensor_config()
         print("Sensor configuration:", sensor_cfg)
+        show_info("MSP_SENSOR_CONFIG", info)
 
         print()
-        _, mode_ranges = api.get_mode_ranges()
+        info, mode_ranges = api.get_mode_ranges()
         print("Mode ranges:")
         for entry in mode_ranges:
             print(entry)
+        show_info("MSP_MODE_RANGES", info)
 
         print()
-        _, status = api.get_inav_status()
+        info, status = api.get_inav_status()
         print("INAV status:", status)
+        show_info("MSP2_INAV_STATUS", info)
 
         print()
-        _, analog = api.get_inav_analog()
+        info, analog = api.get_inav_analog()
         print("Analog readings:", analog)
+        show_info("MSP2_INAV_ANALOG", info)
 
         print()
-        _, rx_config = api.get_rx_config()
+        info, rx_config = api.get_rx_config()
         print("RX config:", rx_config)
+        show_info("MSP_RX_CONFIG", info)
 
         print()
-        _, rx_map = api.get_rx_map()
+        info, rx_map = api.get_rx_map()
         print("RX map:", rx_map)
-
-        #skip this until patch, smashes the stack
-        #print()
-        #print("Logic conditions:")
-        #for condition in api.get_logic_conditions():
-        #    if condition["enabled"]:
-        #        print(condition)
+        show_info("MSP_RX_MAP", info)
 
         print()
-        _, attitude = api.get_attitude()
+        info, attitude = api.get_attitude()
         print("Attitude:", attitude)
+        show_info("MSP_ATTITUDE", info)
 
         print()
-        _, altitude = api.get_altitude()
+        info, altitude = api.get_altitude()
         print("Altitude:", altitude)
+        show_info("MSP_ALTITUDE", info)
 
         print()
-        _, imu = api.get_imu()
+        info, imu = api.get_imu()
         print("IMU summary:", imu)
+        show_info("MSP_RAW_IMU", info)
 
         print()
-        _, rc_channels = api.get_rc_channels()
+        info, rc_channels = api.get_rc_channels()
         print("RC channels:", rc_channels[:6])
+        show_info("MSP_RC", info)
 
         target_channels = rc_channels[:] if rc_channels else [1500, 1500, 1500, 1500]
-        _, ack = api.set_rc_channels(target_channels)
+        info, ack = api.set_rc_channels(target_channels)
         print("SET_RAW_RC ack:", ack)
+        show_info("MSP_SET_RAW_RC", info)
 
         print()
-        _, bat_cfg = api.get_battery_config()
+        info, bat_cfg = api.get_battery_config()
         print("Battery config:", bat_cfg)
+        show_info("MSP2_INAV_BATTERY_CONFIG", info)
 
         print()
-        _, gps_stats = api.get_gps_statistics()
+        info, gps_stats = api.get_gps_statistics()
         print("GPS statistics:", gps_stats)
+        show_info("MSP_GPSSTATISTICS", info)
 
         print()
-        _, wp_info = api.get_waypoint_info()
+        info, wp_info = api.get_waypoint_info()
         print("Waypoint info:", wp_info)
+        show_info("MSP_WP_GETINFO", info)
 
         print()
-        _, raw_gps = api.get_raw_gps()
+        info, raw_gps = api.get_raw_gps()
         print("Raw GPS:", raw_gps)
+        show_info("MSP_RAW_GPS", info)
 
         print()
-        _, set_wp_ack = api.set_waypoint(
+        info, set_wp_ack = api.set_waypoint(
             waypointIndex=1,
             action=InavEnums.navWaypointActions_e.NAV_WP_ACTION_WAYPOINT,
             latitude=1.234,
@@ -116,17 +148,21 @@ def main() -> None:
             altitude=15.0,
         )
         print("SET_WP ack:", set_wp_ack)
+        show_info("MSP_SET_WP", info)
 
         print()
-        _, waypoint = api.get_waypoint(1)
+        info, waypoint = api.get_waypoint(1)
         print("Waypoint:", waypoint)
+        show_info("MSP_WP", info)
 
         print()
-        _, nav_status = api.get_nav_status()
+        info, nav_status = api.get_nav_status()
         print("Navigation status:", nav_status)
+        show_info("MSP_NAV_STATUS", info)
 
-        _, active_modes = api.get_active_modes()
+        info, active_modes = api.get_active_modes()
         print("Active modes:", active_modes)
+        show_info("get_active_modes", info)
 
         """print()
         _, simulator_reply = api.set_simulator(

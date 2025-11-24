@@ -11,11 +11,12 @@ from typing import Any, Dict
 from mspapi2.lib import InavEnums, InavMSP
 from mspapi2.msp_api import MSPApi, MSPServerTransport
 
+CLIENT_ID = "testclient"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="High-level MSP API client via msp_server.py")
     parser.add_argument("--server", default="127.0.0.1:9000", help="MSP server host:port")
-    parser.add_argument("--client-id", default=socket.gethostname(), help="Client identifier")
+    parser.add_argument("--client-id", default=CLIENT_ID, help="Client identifier")
     parser.add_argument("--timeout", type=float, default=1.0, help="Per-request timeout (seconds)")
     return parser.parse_args()
 
@@ -77,6 +78,9 @@ def show_info(label: str, info: Dict[str, Any]) -> None:
     queue_total = server.get("inflight_total")
     if isinstance(queue_total, int):
         parts.append(f"queue_total={queue_total}")
+    sched_failed = server.get("scheduler_failed")
+    if sched_failed:
+        parts.append(f"scheduler_failed={sched_failed}")
     if parts:
         print(f"  {label} info: ", ", ".join(parts))
 

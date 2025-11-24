@@ -110,7 +110,7 @@ async def api_worker(idx: int, host: str, port: int, duration: float) -> None:
                 logging.info("API[%s] %-20s latency=%s cached=%s", ident, name, info.get("latency_ms"), info.get("cached"))
             except Exception:
                 logging.exception("API[%s] call %s failed", ident, name)
-            await asyncio.sleep(random.uniform(0.01, 0.2))
+            await asyncio.sleep(0.001)
     finally:
         api.close()
 
