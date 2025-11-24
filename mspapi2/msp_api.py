@@ -268,45 +268,6 @@ class MSPApi:
             )
         return active_modes
 
-    def sched_set(
-        self,
-        code: Union[InavMSP, int],
-        delay: float,
-        payload: Optional[Mapping[str, Any]] = None,
-        timeout: float = 1.0,
-    ) -> Tuple[Dict[str, Any], Any]:
-        handler = getattr(self._serial, "sched_set", None)
-        if handler is None:
-            raise NotImplementedError("Transport does not support scheduling")
-        code_int = int(code.value if isinstance(code, InavMSP) else code)
-        result = handler(code_int, delay, payload, timeout)
-        info = self._build_info(getattr(self._serial, "last_diag", None), code_int)
-        self.diag = info
-        return info, result
-
-    def sched_get(self) -> Tuple[Dict[str, Any], Any]:
-        handler = getattr(self._serial, "sched_get", None)
-        if handler is None:
-            raise NotImplementedError("Transport does not support scheduling")
-        result = handler()
-        info = self._build_info(getattr(self._serial, "last_diag", None), None)
-        self.diag = info
-        return info, result
-
-    def sched_remove(self, code: Union[InavMSP, int]) -> Tuple[Dict[str, Any], Any]:
-        handler = getattr(self._serial, "sched_remove", None)
-        if handler is None:
-            # fall back to sched_set delay<=0 if available
-            handler_set = getattr(self._serial, "sched_set", None)
-            if handler_set is None:
-                raise NotImplementedError("Transport does not support scheduling")
-            return self.sched_set(code, delay=0.0)
-        code_int = int(code.value if isinstance(code, InavMSP) else code)
-        result = handler(code_int)
-        info = self._build_info(getattr(self._serial, "last_diag", None), code_int)
-        self.diag = info
-        return info, result
-
     # ----- API surface -----
 
     def get_api_version(self) -> Tuple[Dict[str, Any], Dict[str, int]]:

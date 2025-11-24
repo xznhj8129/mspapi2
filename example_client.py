@@ -93,8 +93,9 @@ def main() -> None:
     api.open()
     try:
 
-        info, schedules = api.sched_get()
-        print("Scheduler updated:", schedules)
+        schedules = transport.sched_get()
+        info = api.info_from_diag(transport.last_diag, None)
+        print("Scheduler:", schedules)
         show_info("sched_get", info)
 
         info, api_version = api.get_api_version()
@@ -201,19 +202,19 @@ def main() -> None:
         print("  ", version_uncached)
         show_info("MSP_API_VERSION (no cache)", info_uncached)
 
-        info, schedules = api.sched_get()
+        info, schedules = transport.sched_get()
         print("\nCurrent scheduler:", schedules)
         show_info("sched_get", info)
 
-        info, _ = api.sched_set(InavMSP.MSP_API_VERSION, delay=5.0)
+        info, _ = transport.sched_set(InavMSP.MSP_API_VERSION, delay=5.0)
         print("Setting MSP_API_VERSION poll every 5s")
         show_info("sched_set", info)
 
-        info, _ = api.sched_remove(InavMSP.MSP_API_VERSION)
+        info, _ = transport.sched_remove(InavMSP.MSP_API_VERSION)
         print("Removing MSP_API_VERSION schedule")
         show_info("sched_remove", info)
 
-        info, schedules = api.sched_get()
+        info, schedules = transport.sched_get()
         print("Scheduler after removal:", schedules)
         show_info("sched_get", info)
 

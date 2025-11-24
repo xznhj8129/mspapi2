@@ -71,7 +71,8 @@ def main() -> None:
                 break
             time.sleep(0.5)
 
-        info, schedules = api.sched_get()
+        schedules = transport.sched_get()
+        info = api.info_from_diag(transport.last_diag, None)
         print("Scheduler:", schedules)
         show_info("sched_get", info)
 
@@ -80,7 +81,8 @@ def main() -> None:
                 print(f"{stream.name} timer active")
                 continue
             t = 1.0 / msp_telemetry_msgs[stream]
-            info, _ = api.sched_set(stream, delay=t)
+            transport.sched_set(int(stream.value), delay=t)
+            info = api.info_from_diag(transport.last_diag, stream)
             print(f"Adding {stream.name} timer every {t}s")
             show_info("sched_set", info)
 

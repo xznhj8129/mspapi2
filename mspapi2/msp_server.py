@@ -30,7 +30,6 @@ SCHEDULER_TICK_S = 0.02
 MIN_TIMEOUT_MS = 50
 MAX_PENDING_WAITERS = 512
 ENCODING = "utf-8"
-DEFAULT_FC_TIMEOUT = 1.0
 DEFAULT_LOG_PATH = "server.log"
 
 
@@ -122,7 +121,7 @@ class PendingRequest:
 class ScheduleEntry:
     code: int
     delay: float
-    payload: Optional[Mapping[str, Any]]
+    payload_bytes: bytes
     next_fire: float
 
 
@@ -163,7 +162,6 @@ class MSPRequestServer:
         serial_port: Optional[str] = None,
         baudrate: Optional[int] = None,
         tcp_endpoint: Optional[str] = None,
-        fc_timeout: float = 1.0,
     ) -> None:
         if not host:
             raise ValueError("host is required")
@@ -177,8 +175,6 @@ class MSPRequestServer:
             raise ValueError("baudrate is required for serial operation")
         if tcp_endpoint and ":" not in tcp_endpoint:
             raise ValueError("tcp_endpoint must be HOST:PORT")
-        if fc_timeout <= 0:
-            raise ValueError("fc_timeout must be positive")
 
         self.host = host
         self.port = port
@@ -619,15 +615,14 @@ class MSPRequestServer:
                             continue
                         current.next_fire = now + current.delay
                         delay = current.delay
-                        payload_struct = current.payload
+                        payload_bytes = current.payload_bytes
                         code = current.code
-                    payload = self._build_payload(code, None, payload_struct)
-                    key = _crc_key(code, payload)
+                    key = _crc_key(code, payload_bytes)
                     self._queue_request(
                         None,
                         req_id=f"sched_{code}_{int(now*1000)}",
                         code=code,
-                        payload=payload,
+                        payload=payload_bytes,
                         timeout_s=delay,
                         key=key,
                         force_version=None,
@@ -654,9 +649,14 @@ class MSPRequestServer:
         if delay <= 0:
             self._send_error(session, req_id, "delay must be positive")
             return
-        payload = req.get("payload")
+        payload_bytes = self._build_payload(code, req.get("raw"), req.get("payload"))
         with self.state_lock:
-            self.schedules[code] = ScheduleEntry(code=code, delay=delay, payload=payload, next_fire=_now_s() + delay)
+            self.schedules[code] = ScheduleEntry(
+                code=code,
+                delay=delay,
+                payload_bytes=payload_bytes,
+                next_fire=_now_s() + delay,
+            )
         self._send_sched_get(session, req_id)
 
     def _handle_sched_remove(self, session: ClientSession, req: Dict[str, Any]) -> None:
@@ -695,7 +695,6 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--serial", dest="serial_port", help="Serial device for FC")
     parser.add_argument("--baudrate", type=int, help="Baudrate for serial")
     parser.add_argument("--tcp-endpoint", help="Existing TCP endpoint for FC (HOST:PORT)")
-    parser.add_argument("--fc-timeout", type=float, default=DEFAULT_FC_TIMEOUT, help="FC request timeout seconds")
     return parser.parse_args(argv)
 
 
@@ -708,7 +707,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         serial_port=args.serial_port,
         baudrate=args.baudrate,
         tcp_endpoint=args.tcp_endpoint,
-        fc_timeout=args.fc_timeout,
     )
     server.serve_forever()
 

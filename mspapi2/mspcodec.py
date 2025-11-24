@@ -43,17 +43,23 @@ def _load_multiwii_enum(schema_path: Path) -> type[enum.IntEnum]:
         raise RuntimeError(f"InavMSP schema not found: {schema_path}") from exc
 
     members: Dict[str, int] = {}
+    codes_seen: Dict[int, str] = {}
     for name, node in data.items():
         if not isinstance(name, str) or not name.isidentifier():
-            continue
-        code_raw = node.get("code") if isinstance(node, Mapping) else None
+            raise RuntimeError(f"Invalid MSP message name in schema: {name!r}")
+        if not isinstance(node, Mapping):
+            raise RuntimeError(f"Invalid MSP schema node for {name}: expected mapping")
+        code_raw = node.get("code")
         try:
             code = int(code_raw)
-        except (TypeError, ValueError):
-            continue
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"Invalid code for {name}: {code_raw!r}") from exc
         if name in members:
-            continue
+            raise RuntimeError(f"Duplicate MSP message name in schema: {name}")
+        if code in codes_seen:
+            raise RuntimeError(f"Duplicate MSP code {code} shared by {codes_seen[code]} and {name}")
         members[name] = code
+        codes_seen[code] = name
 
     if not members:
         raise RuntimeError(f"No MSP messages found in {schema_path}")
@@ -215,10 +221,12 @@ class MSPCodec:
         specs: Dict[InavMSP, MessageSpec] = {}
         for name, node in obj.items():
             if not isinstance(node, Mapping):
-                continue
+                raise RuntimeError(f"Invalid schema entry for {name}: expected mapping")
             spec = cls._parse_one(name, node)
-            if spec:
-                specs[spec.code] = spec
+            if spec.code in specs:
+                other = specs[spec.code].name
+                raise RuntimeError(f"Duplicate schema code {int(spec.code)} for messages {other} and {name}")
+            specs[spec.code] = spec
         return specs
 
     # ----- Helpers -----
@@ -519,15 +527,12 @@ class MSPCodec:
     ) -> Tuple[str, Any, int]:
         name = field.get("name") or f"f{index}"
         total_len = len(payload)
-        optional = bool(field.get("optional"))
         if offset > total_len:
             raise ValueError(f"{message_name}: field '{name}' offset {offset} exceeds payload size {total_len}")
 
         is_array = bool(field.get("array")) or "[]" in str(field.get("ctype", ""))
 
         if offset == total_len:
-            if optional:
-                return name, ([] if is_array else None), offset
             raise ValueError(f"{message_name}: field '{name}' offset {offset} exceeds payload size {total_len}")
 
         if is_array:
@@ -561,9 +566,6 @@ class MSPCodec:
                     length = remaining // elem_size
             total_bytes = elem_size * length
             if offset + total_bytes > total_len:
-                if optional:
-                    default_val: Any = b"" if base_ctype == "char" else []
-                    return name, default_val, total_len
                 raise ValueError(
                     f"{message_name}: field '{name}' length {total_bytes} exceeds payload boundary ({offset} + {total_bytes} > {total_len})"
                 )
@@ -586,8 +588,6 @@ class MSPCodec:
             raise ValueError(f"{message_name}: unable to normalize format for field '{name}'")
         size = struct.calcsize(fmt)
         if offset + size > total_len:
-            if optional:
-                return name, None, total_len
             raise ValueError(
                 f"{message_name}: field '{name}' size {size} exceeds payload boundary ({offset} + {size} > {total_len})"
             )
