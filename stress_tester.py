@@ -11,8 +11,9 @@ import random
 import time
 from typing import Any, Callable, Dict, List, Tuple
 
+from mspapi2.client import MSPClientAPI
 from mspapi2.lib import InavMSP
-from mspapi2.msp_api import MSPApi, MSPServerTransport
+from mspapi2.msp_api import MSPApi
 
 API_CALLS: List[Tuple[str, Callable[[MSPApi], Tuple[Dict[str, Any], Any]]]] = []
 
@@ -98,7 +99,7 @@ def _(api: MSPApi):
 
 async def api_worker(idx: int, host: str, port: int, duration: float) -> None:
     ident = f"stress-api-{idx}"
-    transport = MSPServerTransport(host, port, client_id=ident)
+    transport = MSPClientAPI(host, port, client_id=ident)
     api = MSPApi(port=None, serial_transport=transport)
     api.open()
     end = time.time() + duration
@@ -117,7 +118,7 @@ async def api_worker(idx: int, host: str, port: int, duration: float) -> None:
 
 async def scheduler_worker(idx: int, host: str, port: int, duration: float) -> None:
     ident = f"stress-sched-{idx}"
-    transport = MSPServerTransport(host, port, client_id=ident)
+    transport = MSPClientAPI(host, port, client_id=ident)
     api = MSPApi(port=None, serial_transport=transport)
     api.open()
     codes = list(InavMSP)

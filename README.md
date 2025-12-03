@@ -63,13 +63,14 @@ Server: crc(MSP_RAW_IMU+(empty payload)) is hex a2b8e92, I'm setting requests_di
 
 
 ## Running the server
-`msp_server.py` now requires explicit host/port and an FC connection (serial or TCP):
+`msp_server.py` now requires a JSON config (see `msp_server.config.example.json`) that specifies host/port, logging, and either a serial or TCP FC link:
 ```bash
-python -m mspapi2.msp_server --host 127.0.0.1 --port 9000 --serial /dev/ttyACM0 --baudrate 115200
-# or, when the FC is already exposed over TCP:
-python -m mspapi2.msp_server --host 127.0.0.1 --port 9000 --tcp-endpoint 192.168.1.50:5760
+python -m mspapi2.msp_server --config /etc/mspapi2/server.json
 ```
 If the schema expects a payload, requests without one fail. Decode failures are returned as errors, not silent `None`.
+
+### Server config
+All runtime knobs live in a JSON config (see `msp_server.config.example.json`): host, port, log_path, serial or tcp endpoint, baudrate, cache_ttl_s, global_req_limit_per_sec, rate_window_s, send_queue_limit, server_backlog, request_queue_poll_s, scheduler_tick_s, min_timeout_ms, max_pending_waiters.
 
 ### Protocol (JSON-per-line over TCP)
 Client requests (one per line):
@@ -78,6 +79,9 @@ Client requests (one per line):
 {"id":2,"client_id":"jetson","code":102,"payload":{"accData":[0,0,0],"gyroData":[0,0,0],"magData":[0,0,0]}}
 {"id":3,"client_id":"jetson","action":"sched_set","code":1,"delay":5.0}
 {"id":4,"client_id":"jetson","action":"sched_get"}
+{"id":5,"client_id":"jetson","action":"sched_data","codes":["MSP_RAW_IMU","MSP_ALTITUDE"]}
+{"id":6,"client_id":"jetson","action":"health"}
+{"id":7,"client_id":"jetson","action":"shutdown"}
 ```
 Fields:
 - `id` optional correlation tag echoed back.
@@ -88,6 +92,7 @@ Fields:
 - `timeout_ms` per-request timeout (ms).
 - `no_cache` disable short cache.
 - `action` `sched_set`/`sched_get`/`sched_remove`; `delay` (seconds) for schedules.
+- `action` `sched_data` returns cached scheduled telemetry (optionally filtered by `codes` list). Non-MSP actions: `health`, `utilization`, `clients`, `stats`, `reset` (reopens transport and clears state), `shutdown` (graceful stop).
 
 Server replies:
 ```json
@@ -121,7 +126,7 @@ finally:
 Channel helpers honor the RX map: `api.get_ch("pitch")` resolves via the FC RX map; `api.set_rc_channels({"pitch": 1600, 2: 1700})` overwrites specific indices without reshuffling manually.
 
 ### Mission-oriented usage with enums
-- `InavMSP` enumerates every MSP code; pass these names instead of bare integers to avoid mismatches (e.g., `api._request(InavMSP.MSP_NAV_STATUS)` or `MSPServerTransport.request(int(InavMSP.MSP_NAV_STATUS), ...)`).
+- `InavMSP` enumerates every MSP code; pass these names instead of bare integers to avoid mismatches (e.g., `api._request(InavMSP.MSP_NAV_STATUS)` or `MSPClientAPI.request(int(InavMSP.MSP_NAV_STATUS), ...)`).
 - `InavEnums` contains the FC-side enums (navigation states, waypoint actions, arming flags, sensor types). Always construct or compare against these enums so mission logic cannot drift from firmware constants.
 - Example: fetch nav status and branch safely:
 ```python

@@ -207,3 +207,4 @@ __marimo__/
 inav_*_SITL
 eeprom.bin
 .trash
+sitldiff.txt

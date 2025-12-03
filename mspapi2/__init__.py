@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from importlib import metadata as importlib_metadata
 
-from .msp_api import MSPApi, MSPServerTransport
+from .msp_api import MSPApi
+from .client import MSPClientAPI
 from .msp_server import MSPRequestServer
 from .msp_serial import MSPSerial
 from .mspcodec import InavMSP, MSPCodec
@@ -22,7 +23,7 @@ __all__ = [
     "MSPCodec",
     "MSPRequestServer",
     "MSPSerial",
-    "MSPServerTransport",
+    "MSPClientAPI",
     "InavMSP",
     "__version__",
 ]

@@ -30,7 +30,6 @@ SCHEDULER_TICK_S = 0.02
 MIN_TIMEOUT_MS = 50
 MAX_PENDING_WAITERS = 512
 ENCODING = "utf-8"
-DEFAULT_LOG_PATH = "server.log"
 
 
 def _now_s() -> float:
@@ -211,8 +210,12 @@ class MSPRequestServer:
         self.pending: Dict[str, PendingRequest] = {}
         self.cache: Dict[str, CacheEntry] = {}
         self.schedules: Dict[int, ScheduleEntry] = {}
+        self.schedule_data: Dict[int, Dict[str, Any]] = {}
         self.clients: Dict[str, ClientSession] = {}
         self.code_stats: Dict[int, Dict[str, float]] = {}
+        self.error_count = 0
+        self.disconnect_count = 0
+        self.last_error: Optional[str] = None
         self.start_time = _now_s()
 
         self.send_queue: queue.Queue[PendingRequest] = queue.Queue(maxsize=SEND_QUEUE_LIMIT)
@@ -233,7 +236,12 @@ class MSPRequestServer:
         self._log("listening")
 
         while not self.stop_evt.is_set():
-            conn, addr = self.server_sock.accept()
+            try:
+                conn, addr = self.server_sock.accept()
+            except OSError:
+                if self.stop_evt.is_set():
+                    break
+                raise
             reader = conn.makefile("r", encoding=ENCODING)
             session = ClientSession(conn=conn, reader=reader, addr=addr, client_id="")
             threading.Thread(
@@ -261,6 +269,8 @@ class MSPRequestServer:
             session.close()
             if session.client_id in self.clients:
                 self.clients.pop(session.client_id, None)
+            with self.state_lock:
+                self.disconnect_count += 1
 
     def _handle_line(self, session: ClientSession, line: str) -> None:
         if not line:
@@ -292,6 +302,20 @@ class MSPRequestServer:
                 self._send_sched_get(session, req.get("id"))
             elif action == "sched_remove":
                 self._handle_sched_remove(session, req)
+            elif action == "sched_data":
+                self._handle_sched_data(session, req)
+            elif action == "health":
+                self._handle_health(session, req)
+            elif action == "utilization":
+                self._handle_utilization(session, req)
+            elif action == "clients":
+                self._handle_clients(session, req)
+            elif action == "stats":
+                self._handle_stats(session, req)
+            elif action == "reset":
+                self._handle_reset(session, req)
+            elif action == "shutdown":
+                self._handle_shutdown(session, req)
             else:
                 self._send_error(session, req.get("id"), f"unknown action {action}")
             return
@@ -483,10 +507,18 @@ class MSPRequestServer:
                 with self.state_lock:
                     inflight_total = len(self.pending)
                     queue_depth = self.send_queue.qsize()
+                    errors = self.error_count
+                    disconnects = self.disconnect_count
+                    cache_entries = len(self.cache)
+                    schedules = len(self.schedules)
                 server_info = {
                     "requests_per_min": self._requests_per_min(),
                     "inflight_total": inflight_total,
                     "queue_depth": queue_depth,
+                    "cache_entries": cache_entries,
+                    "schedules": schedules,
+                    "errors": errors,
+                    "disconnects": disconnects,
                     "reconnections": self.transport._reconnects,  # type: ignore[attr-defined]
                     "scheduler_failed": False,
                 }
@@ -552,6 +584,13 @@ class MSPRequestServer:
         with self.state_lock:
             self.cache[pending.key] = cache_entry
             self.pending.pop(pending.key, None)
+            if pending.scheduled:
+                self.schedule_data[pending.code] = {
+                    "payload": payload,
+                    "time": time.time(),
+                    "interval": pending.schedule_delay,
+                    "diag": diag,
+                }
         data = self.codec.unpack_reply(InavMSP(pending.code), payload)
         safe_data = _json_safe(data)
         safe_diag = _json_safe(diag)
@@ -583,6 +622,8 @@ class MSPRequestServer:
     def _fail_pending(self, pending: PendingRequest, error: str, diag: Dict[str, Any]) -> None:
         with self.state_lock:
             self.pending.pop(pending.key, None)
+            self.error_count += 1
+            self.last_error = error
         for session, req_id in pending.waiters:
             if session.closed:
                 continue
@@ -594,6 +635,9 @@ class MSPRequestServer:
                 session.close()
 
     def _send_error(self, session: ClientSession, req_id: Any, message: str) -> None:
+        with self.state_lock:
+            self.error_count += 1
+            self.last_error = str(message)
         try:
             session.send_json({"id": req_id, "ok": False, "error": _json_safe(message)})
         except OSError as exc:
@@ -678,6 +722,131 @@ class MSPRequestServer:
             schedules = {InavMSP(code).name: {"delay": entry.delay} for code, entry in self.schedules.items()}
         session.send_json({"id": req_id, "ok": True, "schedules": schedules, "diag": {"server": {"requests_per_min": self._requests_per_min()}}})
 
+    def _handle_sched_data(self, session: ClientSession, req: Dict[str, Any]) -> None:
+        req_id = req.get("id")
+        raw_codes = req.get("codes")
+        wanted_codes: Optional[List[int]] = None
+        if raw_codes is not None:
+            if not isinstance(raw_codes, list):
+                self._send_error(session, req_id, "codes must be a list")
+                return
+            wanted_codes = []
+            for value in raw_codes:
+                try:
+                    wanted_codes.append(_pack_code(value))
+                except Exception as exc:
+                    self._send_error(session, req_id, f"invalid code in codes: {exc}")
+                    return
+        with self.state_lock:
+            snapshot = dict(self.schedule_data)
+        result: Dict[int, Dict[str, Any]] = {}
+        for code, entry in snapshot.items():
+            if wanted_codes is not None and code not in wanted_codes:
+                continue
+            payload_bytes = entry.get("payload")
+            if payload_bytes is None:
+                continue
+            interval = entry.get("interval")
+            result[int(code)] = {
+                "time": entry.get("time"),
+                "interval": interval,
+                "payload_b64": base64.b64encode(payload_bytes).decode("ascii"),
+                "payload_len": len(payload_bytes),
+                "diag": _json_safe(entry.get("diag")),
+            }
+        session.send_json({"id": req_id, "ok": True, "data": result, "diag": {"server": {"requests_per_min": self._requests_per_min()}}})
+
+    def _close_all_clients(self) -> None:
+        with self.state_lock:
+            clients_copy = list(self.clients.values())
+        for sess in clients_copy:
+            try:
+                sess.close()
+            finally:
+                continue
+        with self.state_lock:
+            self.clients.clear()
+
+    def _server_snapshot(self) -> Dict[str, Any]:
+        with self.state_lock:
+            inflight_total = len(self.pending)
+            queue_depth = self.send_queue.qsize()
+            cache_entries = len(self.cache)
+            schedules = len(self.schedules)
+            clients = list(self.clients.keys())
+            errors = self.error_count
+            disconnects = self.disconnect_count
+            last_error = self.last_error
+            code_stats = dict(self.code_stats)
+        uptime = max(0.0, _now_s() - self.start_time)
+        return {
+            "requests_per_min": self._requests_per_min(),
+            "inflight_total": inflight_total,
+            "queue_depth": queue_depth,
+            "cache_entries": cache_entries,
+            "schedules": schedules,
+            "clients": clients,
+            "errors": errors,
+            "disconnects": disconnects,
+            "last_error": last_error,
+            "uptime_s": uptime,
+            "code_stats": code_stats,
+            "reconnections": self.transport._reconnects,  # type: ignore[attr-defined]
+        }
+
+    def _handle_health(self, session: ClientSession, req: Dict[str, Any]) -> None:
+        snapshot = self._server_snapshot()
+        session.send_json({"id": req.get("id"), "ok": True, "health": snapshot})
+
+    def _handle_utilization(self, session: ClientSession, req: Dict[str, Any]) -> None:
+        snapshot = self._server_snapshot()
+        snapshot["limits"] = {
+            "global_req_limit_per_sec": GLOBAL_REQ_LIMIT_PER_SEC,
+            "rate_window_s": RATE_WINDOW_S,
+            "send_queue_limit": SEND_QUEUE_LIMIT,
+            "max_pending_waiters": MAX_PENDING_WAITERS,
+            "min_timeout_ms": MIN_TIMEOUT_MS,
+        }
+        session.send_json({"id": req.get("id"), "ok": True, "utilization": snapshot})
+
+    def _handle_clients(self, session: ClientSession, req: Dict[str, Any]) -> None:
+        snapshot = self._server_snapshot()
+        session.send_json({"id": req.get("id"), "ok": True, "clients": snapshot.get("clients", []), "disconnects": snapshot.get("disconnects"), "errors": snapshot.get("errors")})
+
+    def _handle_stats(self, session: ClientSession, req: Dict[str, Any]) -> None:
+        snapshot = self._server_snapshot()
+        session.send_json({"id": req.get("id"), "ok": True, "code_stats": snapshot.get("code_stats", {}), "errors": snapshot.get("errors"), "disconnects": snapshot.get("disconnects"), "last_error": snapshot.get("last_error")})
+
+    def _handle_reset(self, session: ClientSession, req: Dict[str, Any]) -> None:
+        self.transport.close()
+        self._close_all_clients()
+        with self.state_lock:
+            self.pending.clear()
+            self.cache.clear()
+            self.schedules.clear()
+            self.schedule_data.clear()
+            self.code_stats.clear()
+            self.send_queue = queue.Queue(maxsize=SEND_QUEUE_LIMIT)
+            self.error_count = 0
+            self.disconnect_count = 0
+            self.last_error = None
+            self.start_time = _now_s()
+        self.transport.open()
+        session.send_json({"id": req.get("id"), "ok": True, "reset": self._server_snapshot()})
+
+    def _handle_shutdown(self, session: ClientSession, req: Dict[str, Any]) -> None:
+        session.send_json({"id": req.get("id"), "ok": True, "shutdown": True})
+        def _shutdown() -> None:
+            self.stop_evt.set()
+            self._close_all_clients()
+            if self.server_sock:
+                try:
+                    self.server_sock.close()
+                finally:
+                    self.server_sock = None
+            self.transport.close()
+        threading.Thread(target=_shutdown, name="msp_shutdown", daemon=True).start()
+
     def _log(self, msg: str) -> None:
         sys.stdout.write(f"[msp_server] {msg}\n")
         sys.stdout.flush()
@@ -689,24 +858,94 @@ class MSPRequestServer:
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="MSP TCP broker")
-    parser.add_argument("--host", required=True, help="TCP host to bind")
-    parser.add_argument("--port", required=True, type=int, help="TCP port to bind")
-    parser.add_argument("--serial", dest="serial_port", help="Serial device for FC")
-    parser.add_argument("--baudrate", type=int, help="Baudrate for serial")
-    parser.add_argument("--tcp-endpoint", help="Existing TCP endpoint for FC (HOST:PORT)")
+    parser = argparse.ArgumentParser(description="MSP TCP broker (config-driven)")
+    parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to JSON config with host/port/log_path and serial or tcp settings",
+    )
     return parser.parse_args(argv)
+
+
+def _require_str(config: Mapping[str, Any], key: str) -> str:
+    if key not in config:
+        raise ValueError(f"config.{key} is required")
+    value = config[key]
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"config.{key} must be a non-empty string")
+    return value
+
+
+def _require_int(config: Mapping[str, Any], key: str, *, positive: bool = False) -> int:
+    if key not in config:
+        raise ValueError(f"config.{key} is required")
+    value = config[key]
+    try:
+        value_int = int(value)
+    except Exception as exc:
+        raise ValueError(f"config.{key} must be an integer") from exc
+    if positive and value_int <= 0:
+        raise ValueError(f"config.{key} must be positive")
+    return value_int
+
+
+def _require_float(config: Mapping[str, Any], key: str, *, positive: bool = False) -> float:
+    if key not in config:
+        raise ValueError(f"config.{key} is required")
+    value = config[key]
+    try:
+        value_f = float(value)
+    except Exception as exc:
+        raise ValueError(f"config.{key} must be a float") from exc
+    if positive and value_f <= 0.0:
+        raise ValueError(f"config.{key} must be positive")
+    return value_f
 
 
 def main(argv: Optional[List[str]] = None) -> None:
     args = parse_args(argv)
-    _redirect_output(Path(DEFAULT_LOG_PATH))
+    config_path = Path(args.config)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"config file not found: {config_path}")
+    try:
+        with config_path.open("r", encoding="utf-8") as fp:
+            config = json.load(fp)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON in config {config_path}: {exc}") from exc
+
+    host = _require_str(config, "host")
+    port = _require_int(config, "port", positive=True)
+    log_path = _require_str(config, "log_path")
+    serial_port = config.get("serial_port")
+    baudrate = config.get("baudrate")
+    tcp_endpoint = config.get("tcp_endpoint")
+
+    if serial_port and tcp_endpoint:
+        raise ValueError("choose either config.serial_port or config.tcp_endpoint, not both")
+    if not serial_port and not tcp_endpoint:
+        raise ValueError("config must provide serial_port or tcp_endpoint")
+    if serial_port:
+        baudrate = _require_int(config, "baudrate", positive=True)
+    if tcp_endpoint and ":" not in tcp_endpoint:
+        raise ValueError("tcp_endpoint must be HOST:PORT")
+
+    global CACHE_TTL_S, GLOBAL_REQ_LIMIT_PER_SEC, RATE_WINDOW_S, SEND_QUEUE_LIMIT, SERVER_BACKLOG, REQUEST_QUEUE_POLL_S, SCHEDULER_TICK_S, MIN_TIMEOUT_MS, MAX_PENDING_WAITERS
+    CACHE_TTL_S = _require_float(config, "cache_ttl_s", positive=True)
+    GLOBAL_REQ_LIMIT_PER_SEC = _require_int(config, "global_req_limit_per_sec", positive=True)
+    RATE_WINDOW_S = _require_float(config, "rate_window_s", positive=True)
+    SEND_QUEUE_LIMIT = _require_int(config, "send_queue_limit", positive=True)
+    SERVER_BACKLOG = _require_int(config, "server_backlog", positive=True)
+    REQUEST_QUEUE_POLL_S = _require_float(config, "request_queue_poll_s", positive=True)
+    SCHEDULER_TICK_S = _require_float(config, "scheduler_tick_s", positive=True)
+    MIN_TIMEOUT_MS = _require_int(config, "min_timeout_ms", positive=True)
+    MAX_PENDING_WAITERS = _require_int(config, "max_pending_waiters", positive=True)
+    _redirect_output(Path(log_path))
     server = MSPRequestServer(
-        host=args.host,
-        port=args.port,
-        serial_port=args.serial_port,
-        baudrate=args.baudrate,
-        tcp_endpoint=args.tcp_endpoint,
+        host=host,
+        port=port,
+        serial_port=serial_port,
+        baudrate=baudrate,
+        tcp_endpoint=tcp_endpoint,
     )
     server.serve_forever()
 

@@ -9,8 +9,9 @@ import sys
 import time
 from typing import Any, Dict
 
-from mspapi2.lib import InavEnums, InavMSP
-from mspapi2.msp_api import MSPApi, MSPServerTransport
+from mspapi2.client import MSPClientAPI
+from mspapi2.lib import InavMSP
+from mspapi2.msp_api import MSPApi
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,7 +58,7 @@ def main() -> None:
         raise ValueError("Server must be HOST:PORT")
     host, port_str = args.server.rsplit(":", 1)
     port = int(port_str)
-    transport = MSPServerTransport(host, port, client_id=args.client_id)
+    transport = MSPClientAPI(host, port, client_id=args.client_id)
     api = MSPApi(port=None, serial_transport=transport)
     api.open()
     try:
@@ -91,7 +92,6 @@ def main() -> None:
         print("\nSensor configuration:", sensor_config)
         show_info("MSP_SENSOR_CONFIG", info)
 
-
         info, rx_config = api.get_rx_config()
         print("\nRX config:", rx_config)
         show_info("MSP_RX_CONFIG", info)
@@ -107,42 +107,16 @@ def main() -> None:
         show_info("MSP_MODE_RANGES", info)
 
         while True:
-            info, status = api.get_inav_status()
-            print("\nINAV status:", status)
-            show_info("MSP2_INAV_STATUS", info)
-
-            info, analog = api.get_inav_analog()
-            print("\nAnalog readings:", analog)
-            show_info("MSP2_INAV_ANALOG", info)
-
-            info, attitude = api.get_attitude()
-            print("\nAttitude:", attitude)
-            show_info("MSP_ATTITUDE", info)
-
-            info, altitude = api.get_altitude()
-            print("\nAltitude:", altitude)
-            show_info("MSP_ALTITUDE", info)
-
-            info, imu = api.get_imu()
-            print("\nIMU summary:", imu)
-            show_info("MSP_RAW_IMU", info)
-
-            info, rc_channels = api.get_rc_channels()
-            print("\nRC channels:", rc_channels[:6])
-            show_info("MSP_RC", info)
-
-            info, raw_gps = api.get_raw_gps()
-            print("\nRaw GPS:", raw_gps)
-            show_info("MSP_RAW_GPS", info)
-
-            info, gps_stats = api.get_gps_statistics()
-            print("\nGPS statistics:", gps_stats)
-            show_info("MSP_GPSSTATISTICS", info)
-
-            info, active_modes = api.get_active_modes()
-            print("Active modes:", active_modes)
-            show_info("get_active_modes", info)
-
+            telemetry = transport.sched_data(*msp_telemetry_msgs.keys())
+            info = api.info_from_diag(transport.last_diag, None)
+            print("\nScheduled telemetry snapshot:")
+            for code_int, entry in telemetry.items():
+                name = InavMSP(code_int).name
+                interval = entry.get("interval")
+                ts = entry.get("time")
+                data = entry.get("data")
+                print(f"{name} @ interval={interval}s time={ts}: {data}")
+            show_info("sched_data", info)
             time.sleep(1)
 
     finally:

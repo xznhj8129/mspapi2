@@ -8,8 +8,9 @@ import socket
 import sys
 from typing import Any, Dict
 
+from mspapi2.client import MSPClientAPI
 from mspapi2.lib import InavEnums, InavMSP
-from mspapi2.msp_api import MSPApi, MSPServerTransport
+from mspapi2.msp_api import MSPApi
 
 CLIENT_ID = "testclient"
 
@@ -88,7 +89,7 @@ def show_info(label: str, info: Dict[str, Any]) -> None:
 def main() -> None:
     args = parse_args()
     host, port = parse_endpoint(args.server)
-    transport = MSPServerTransport(host, port, client_id=args.client_id)
+    transport = MSPClientAPI(host, port, client_id=args.client_id)
     api = MSPApi(port=None, serial_transport=transport)
     api.open()
     try:
@@ -195,6 +196,23 @@ def main() -> None:
         print("\nActive modes:", active_modes)
         show_info("get_active_modes", info)
 
+
+        x = transport.health()
+        print("Health:")
+        print(x)
+
+        x = transport.utilization()
+        print("utilization:")
+        print(x)
+
+        x = transport.clients()
+        print("clients:")
+        print(x)
+
+        x = transport.stats()
+        print("stats:")
+        print(x)
+
         print("\nForced uncached MSP_API_VERSION (no cache):")
         _, raw_payload = transport.request(int(InavMSP.MSP_API_VERSION), cacheable=False)
         info_uncached = api.info_from_diag(transport.last_diag, InavMSP.MSP_API_VERSION)
@@ -202,21 +220,20 @@ def main() -> None:
         print("  ", version_uncached)
         show_info("MSP_API_VERSION (no cache)", info_uncached)
 
-        info, schedules = transport.sched_get()
+        schedules = transport.sched_get()
         print("\nCurrent scheduler:", schedules)
-        show_info("sched_get", info)
 
-        info, _ = transport.sched_set(InavMSP.MSP_API_VERSION, delay=5.0)
+        _ = transport.sched_set(InavMSP.MSP_API_VERSION, delay=5.0)
         print("Setting MSP_API_VERSION poll every 5s")
-        show_info("sched_set", info)
 
-        info, _ = transport.sched_remove(InavMSP.MSP_API_VERSION)
-        print("Removing MSP_API_VERSION schedule")
-        show_info("sched_remove", info)
-
-        info, schedules = transport.sched_get()
+        schedules = transport.sched_get()
         print("Scheduler after removal:", schedules)
-        show_info("sched_get", info)
+
+        _ = transport.sched_remove(InavMSP.MSP_API_VERSION)
+        print("Removing MSP_API_VERSION schedule")
+
+        schedules = transport.sched_get()
+        print("Scheduler after removal:", schedules)
 
     finally:
         api.close()
