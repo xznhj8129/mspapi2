@@ -12,8 +12,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", default="/dev/ttyACM0", help="Serial device path (ignored if --tcp is used)")
     parser.add_argument("--baudrate", type=int, default=115200, help="Serial baud rate")
     parser.add_argument("--tcp", metavar="HOST:PORT", help="Connect using TCP socket instead of serial, e.g. localhost:5760")
-    parser.add_argument("--read-timeout", type=float, default=0.05, help="Read timeout in seconds")
-    parser.add_argument("--write-timeout", type=float, default=0.25, help="Write timeout in seconds")
+    parser.add_argument("--read-timeout", type=float, default=1, help="Read timeout in miliseconds")
+    parser.add_argument("--write-timeout", type=float, default=1, help="Write timeout in miliseconds")
     return parser.parse_args()
 
 

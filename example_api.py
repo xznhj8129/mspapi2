@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from mspapi2.lib import InavEnums
+from mspapi2.lib import InavEnums, InavMSP
 from mspapi2.msp_api import MSPApi
 import time
 from typing import Any, Dict
@@ -12,8 +12,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", default="/dev/ttyACM0", help="Serial device path (ignored if --tcp is used)")
     parser.add_argument("--baudrate", type=int, default=115200, help="Serial baud rate")
     parser.add_argument("--tcp", metavar="HOST:PORT", help="Connect using TCP socket instead of serial, e.g. localhost:5760")
-    parser.add_argument("--read-timeout", type=float, default=0.05, help="Read timeout in seconds")
-    parser.add_argument("--write-timeout", type=float, default=0.25, help="Write timeout in seconds")
+    parser.add_argument("--read-timeout", type=float, default=10.0, help="Read timeout in milliseconds")
+    parser.add_argument("--write-timeout", type=float, default=250.0, help="Write timeout in milliseconds")
     return parser.parse_args()
 
 
@@ -43,8 +43,8 @@ def main() -> None:
     with MSPApi(
         port=port,
         baudrate=args.baudrate,
-        read_timeout=args.read_timeout,
-        write_timeout=args.write_timeout,
+        read_timeout_ms=args.read_timeout,
+        write_timeout_ms=args.write_timeout,
         tcp_endpoint=args.tcp,
     ) as api:
         print()
@@ -90,12 +90,20 @@ def main() -> None:
         show_info(api.info)
 
         print()
-        logic_info, logic_conditions = api.get_logic_conditions()
-        print("Logic conditions:")
-        for condition in logic_conditions:
-            if condition["enabled"]:
-                print(condition)
+        logic_info, logic_condition = api.get_logic_condition(0)
+        print("Logic condition[0]:", logic_condition)
         show_info(logic_info)
+
+        print()
+        try:
+            api._request_raw(InavMSP.MSP_SET_ACC_TRIM, b"")
+        except Exception as exc:
+            print(f"Deprecated/invalid MSP example (MSP_SET_ACC_TRIM): {exc}")
+
+        try:
+            api._request_raw(InavMSP.MSP2_INAV_GLOBAL_FUNCTIONS, b"")
+        except Exception as exc:
+            print(f"Unimplemented MSP example (MSP2_INAV_GLOBAL_FUNCTIONS): {exc}")
 
         print()
         rx_map = api.get_rx_map()

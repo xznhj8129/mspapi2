@@ -35,8 +35,8 @@ class MSPApi:
         port: Optional[str] = "/dev/ttyACM0",
         baudrate: int = 115200,
         *,
-        read_timeout: float = 0.05,
-        write_timeout: float = 0.25,
+        read_timeout_ms: float = 1.0,
+        write_timeout_ms: float = 1.0,
         codec_path: Optional[Path] = None,
         tcp_endpoint: Optional[str] = None,
         serial_transport: Optional[Any] = None,
@@ -58,8 +58,8 @@ class MSPApi:
                 self._serial = MSPSerial(
                     endpoint,
                     baudrate,
-                    read_timeout=read_timeout,
-                    write_timeout=write_timeout,
+                    read_timeout=read_timeout_ms / 1000.0,
+                    write_timeout=write_timeout_ms / 1000.0,
                     tcp=True,
                     **keepalive_kwargs,
                 )
@@ -69,8 +69,8 @@ class MSPApi:
                 self._serial = MSPSerial(
                     port,
                     baudrate,
-                    read_timeout=read_timeout,
-                    write_timeout=write_timeout,
+                    read_timeout=read_timeout_ms / 1000.0,
+                    write_timeout=write_timeout_ms / 1000.0,
                     **keepalive_kwargs,
                 )
 
@@ -121,8 +121,6 @@ class MSPApi:
         info: Dict[str, Any] = {
             "code": code_int,
             "latency_ms": None,
-            "cached": None,
-            "cache_age_ms": None,
             "scheduled": False,
             "schedule_delay_s": None,
             "transport": None,
@@ -135,8 +133,6 @@ class MSPApi:
         if not diag:
             return info
         info["latency_ms"] = diag.get("duration_ms")
-        info["cached"] = diag.get("cached")
-        info["cache_age_ms"] = diag.get("cache_age_ms")
         info["scheduled"] = bool(diag.get("scheduled"))
         info["schedule_delay_s"] = diag.get("schedule_delay")
         info["transport"] = diag.get("transport")
@@ -417,30 +413,24 @@ class MSPApi:
             "receiverType": InavEnums.rxReceiverType_e(rep["receiverType"]),
         }
 
-    def get_logic_conditions(self) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-        self.info, reps = self._request(InavMSP.MSP2_INAV_LOGIC_CONDITIONS)
-        if isinstance(reps, Mapping):
-            reps = [reps]  # defensive; schema should yield list
-        conditions: List[Dict[str, Any]] = []
-        for entry in reps or []:
-            flags_raw = entry["flags"]
-            conditions.append(
-                {
-                    "enabled": bool(entry["enabled"]),
-                    "activatorId": None if entry["activatorId"] == 0xFF else entry["activatorId"],
-                    "operation": InavEnums.logicOperation_e(entry["operation"]),
-                    "operandAType": InavEnums.logicOperandType_e(entry["operandAType"]),
-                    "operandAValue": entry["operandAValue"],
-                    "operandBType": InavEnums.logicOperandType_e(entry["operandBType"]),
-                    "operandBValue": entry["operandBValue"],
-                    "flags": [
-                            flag
-                            for flag in InavEnums.logicConditionFlags_e
-                            if flags_raw & flag.value
-                        ],
-                }
-            )
-        return self.info, conditions
+    def get_logic_condition(self, condition_index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        payload = self._pack_request(
+            InavMSP.MSP2_INAV_LOGIC_CONDITIONS_SINGLE, {"conditionIndex": condition_index}
+        )
+        self.info, rep = self._request(InavMSP.MSP2_INAV_LOGIC_CONDITIONS_SINGLE, payload)
+        flags_raw = rep["flags"]
+        return self.info, {
+            "enabled": bool(rep["enabled"]),
+            "activatorId": None if rep["activatorId"] == 0xFF else rep["activatorId"],
+            "operation": InavEnums.logicOperation_e(rep["operation"]),
+            "operandAType": InavEnums.logicOperandType_e(rep["operandAType"]),
+            "operandAValue": rep["operandAValue"],
+            "operandBType": InavEnums.logicOperandType_e(rep["operandBType"]),
+            "operandBValue": rep["operandBValue"],
+            "flags": [
+                flag for flag in InavEnums.logicConditionFlags_e if flags_raw & flag.value
+            ],
+        }
 
     def get_attitude(self) -> Tuple[Dict[str, Any], Dict[str, float]]:
         self.info, rep = self._request(InavMSP.MSP_ATTITUDE)
