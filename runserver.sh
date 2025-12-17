@@ -1,1 +1,0 @@
-mspapi2-server --config server.config.json

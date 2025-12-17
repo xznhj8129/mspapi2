@@ -157,16 +157,16 @@ class MSPCodec:
         array_length = inline_length if inline_length is not None else declared_length
 
         if is_array:
-            base = field.get("array_ctype") or ctype_val
-            base = base.replace("[]", "").strip()
-            if base == "char":
+            ctype_val = field.get("array_ctype") or ctype_val
+            ctype_val = ctype_val.replace("[]", "").strip()
+            if ctype_val == "char":
                 if array_length is None:
                     return None
                 return f"{array_length}s"
-            base_code = bin_type_map.get(base)
-            if base_code is None or array_length is None:
+            ctype_val_code = bin_type_map.get(ctype_val)
+            if ctype_val_code is None or array_length is None:
                 return None
-            return f"{array_length}{base_code}"
+            return f"{array_length}{ctype_val_code}"
 
         direct = bin_type_map.get(ctype_val)
         if direct:

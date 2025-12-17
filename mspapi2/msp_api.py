@@ -99,6 +99,7 @@ class MSPApi:
         self.rxmap = None
         self.diag: Optional[Dict[str, Any]] = None
         self._last_code: Optional[int] = None
+        self.info = None
 
     def open(self) -> None:
         self._serial.open()
@@ -116,12 +117,7 @@ class MSPApi:
     # ----- helpers -----
 
     def _build_info(self, diag: Optional[Dict[str, Any]], code: Optional[Union[InavMSP, int]]) -> Dict[str, Any]:
-        if code is not None:
-            code_int = int(code.value) if isinstance(code, InavMSP) else int(code)
-        elif diag is not None and "code" in diag:
-            code_int = int(diag.get("code"))
-        else:
-            code_int = None
+        code_int = int(code.value) if isinstance(code, InavMSP) else int(code)
         info: Dict[str, Any] = {
             "code": code_int,
             "latency_ms": None,
@@ -159,11 +155,6 @@ class MSPApi:
         self._last_code = info.get("code")
         return info
 
-    def info_from_diag(self, diag: Optional[Dict[str, Any]], code: Optional[Union[InavMSP, int]] = None) -> Dict[str, Any]:
-        info = self._build_info(diag, code)
-        self.diag = info
-        return info
-
     def _request_raw(
         self,
         code: InavMSP,
@@ -171,6 +162,7 @@ class MSPApi:
         *,
         timeout: float = 1.0,
     ) -> Tuple[Dict[str, Any], bytes]:
+
         self.open()
         rsp_code, rsp_payload = self._serial.request(int(code), payload, timeout=timeout)
         info = self._capture_info(code)
@@ -185,7 +177,9 @@ class MSPApi:
         *,
         timeout: float = 1.0,
     ) -> Tuple[Dict[str, Any], Union[Mapping[str, Any], List[Mapping[str, Any]]]]:
+
         info, raw = self._request_raw(code, payload, timeout=timeout)
+        self.info = info
         return info, self._codec.unpack_reply(code, raw)
 
     def _pack_request(self, code: InavMSP, data: Mapping[str, Any]) -> bytes:
@@ -266,24 +260,24 @@ class MSPApi:
     # ----- API surface -----
 
     def get_api_version(self) -> Tuple[Dict[str, Any], Dict[str, int]]:
-        info, rep = self._request(InavMSP.MSP_API_VERSION)
-        return info, {
+        self.info, rep = self._request(InavMSP.MSP_API_VERSION)
+        return {
             "mspProtocolVersion": rep["mspProtocolVersion"],
             "apiVersionMajor": rep["apiVersionMajor"],
             "apiVersionMinor": rep["apiVersionMinor"],
         }
 
     def get_fc_variant(self) -> Tuple[Dict[str, Any], Dict[str, str]]:
-        info, rep = self._request(InavMSP.MSP_FC_VARIANT)
+        self.info, rep = self._request(InavMSP.MSP_FC_VARIANT)
         identifier = rep["fcVariantIdentifier"].rstrip(b"\x00").decode("ascii", errors="ignore")
-        return info, {"fcVariantIdentifier": identifier}
+        return {"fcVariantIdentifier": identifier}
 
     def get_board_info(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        info, rep = self._request(InavMSP.MSP_BOARD_INFO)
+        self.info, rep = self._request(InavMSP.MSP_BOARD_INFO)
         board_identifier = rep["boardIdentifier"].rstrip(b"\x00").decode("ascii", errors="ignore")
         target_name = rep["targetName"].rstrip(b"\x00").decode("ascii", errors="ignore")
         comm_capabilities = rep["commCapabilities"]
-        return info, {
+        return {
             "boardIdentifier": board_identifier,
             "hardwareRevision": rep["hardwareRevision"],
             "osdSupport": rep["osdSupport"],
@@ -295,7 +289,7 @@ class MSPApi:
         }
 
     def get_sensor_config(self) -> Tuple[Dict[str, Any], Dict[str, InavEnums]]:
-        info, rep = self._request(InavMSP.MSP_SENSOR_CONFIG)
+        self.info, rep = self._request(InavMSP.MSP_SENSOR_CONFIG)
         sensor_enums = {
             "accHardware": InavEnums.accelerationSensor_e,
             "baroHardware": InavEnums.baroSensor_e,
@@ -308,16 +302,16 @@ class MSPApi:
         for key, enum_cls in sensor_enums.items():
             if key in rep:
                 converted[key] = enum_cls(rep[key])
-        return info, converted
+        return converted
 
     def get_box_ids(self) -> Tuple[Dict[str, Any], List[int]]:
-        info, rep = self._request(InavMSP.MSP_BOXIDS)
+        self.info, rep = self._request(InavMSP.MSP_BOXIDS)
         self.box_ids = list(rep["boxIds"])
-        return info, list(self.box_ids)
+        return list(self.box_ids)
 
     def get_mode_ranges(self) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         box_ids = self._ensure_box_ids_cached()
-        info, entries = self._request(InavMSP.MSP_MODE_RANGES)
+        self.info, entries = self._request(InavMSP.MSP_MODE_RANGES)
         min_pwm = InavDefines.CHANNEL_RANGE_MIN
         step_width = InavDefines.CHANNEL_RANGE_STEP_WIDTH
         summary: List[Dict[str, Any]] = []
@@ -344,10 +338,10 @@ class MSPApi:
                     "pwmRange": (pwm_start, pwm_end),
                 }
             )
-        return info, summary
+        return summary
 
     def get_rx_map(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        info, rep = self._request(InavMSP.MSP_RX_MAP)
+        self.info, rep = self._request(InavMSP.MSP_RX_MAP)
         rc_map = list(rep.get("rcMap"))
         decoded= {}
         for idx, mapped_idx in enumerate(rc_map):
@@ -358,10 +352,10 @@ class MSPApi:
                     "mappedTo": mapped_idx
                 }
         self.rxmap = decoded
-        return info, decoded
+        return decoded
 
     def get_inav_status(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        info, rep = self._request(InavMSP.MSP2_INAV_STATUS)
+        self.info, rep = self._request(InavMSP.MSP2_INAV_STATUS)
         active_modes = self._decode_active_modes_mask(rep.get("activeModes"))
         arming_flags_raw = rep["armingFlags"]
         arming_flags = [
@@ -371,7 +365,7 @@ class MSPApi:
         ]
         sensor_status_raw = rep["sensorStatus"]
         sensor_status = [sensor for sensor in InavEnums.sensors_e if sensor_status_raw & sensor.value]
-        return info, {
+        return {
             "cycleTime": rep["cycleTime"],
             "i2cErrors": rep["i2cErrors"],
             "sensorStatus": sensor_status,
@@ -383,10 +377,10 @@ class MSPApi:
         }
 
     def get_inav_analog(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        info, rep = self._request(InavMSP.MSP2_INAV_ANALOG)
+        self.info, rep = self._request(InavMSP.MSP2_INAV_ANALOG)
         battery_flags_raw = rep["batteryFlags"]
         battery_state = InavEnums.batteryState_e((battery_flags_raw >> 2) & 0x3)
-        return info, {
+        return {
             "batteryFlags": {
                 "fullOnPlugIn": bool(battery_flags_raw & 0x1),
                 "useCapacityThreshold": bool(battery_flags_raw & 0x2),
@@ -404,8 +398,8 @@ class MSPApi:
         }
 
     def get_rx_config(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        info, rep = self._request(InavMSP.MSP_RX_CONFIG)
-        return info, {
+        self.info, rep = self._request(InavMSP.MSP_RX_CONFIG)
+        return {
             "serialRxProvider": InavEnums.rxSerialReceiverType_e(rep["serialRxProvider"]),
             "maxCheck": rep["maxCheck"],
             "midRc": rep["midRc"],
@@ -424,9 +418,7 @@ class MSPApi:
         }
 
     def get_logic_conditions(self) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-        # causes *** stack smashing detected ***: terminated
-        # why?
-        info, reps = self._request(InavMSP.MSP2_INAV_LOGIC_CONDITIONS)
+        self.info, reps = self._request(InavMSP.MSP2_INAV_LOGIC_CONDITIONS)
         if isinstance(reps, Mapping):
             reps = [reps]  # defensive; schema should yield list
         conditions: List[Dict[str, Any]] = []
@@ -448,37 +440,37 @@ class MSPApi:
                         ],
                 }
             )
-        return info, conditions
+        return self.info, conditions
 
     def get_attitude(self) -> Tuple[Dict[str, Any], Dict[str, float]]:
-        info, rep = self._request(InavMSP.MSP_ATTITUDE)
-        return info, {axis: rep[axis] / 10.0 for axis in ("roll", "pitch", "yaw")}
+        self.info, rep = self._request(InavMSP.MSP_ATTITUDE)
+        return {axis: rep[axis] / 10.0 for axis in ("roll", "pitch", "yaw")}
 
     def get_altitude(self) -> Tuple[Dict[str, Any], Dict[str, float]]:
-        info, rep = self._request(InavMSP.MSP_ALTITUDE)
-        return info, {
+        self.info, rep = self._request(InavMSP.MSP_ALTITUDE)
+        return {
             "estimatedAltitude": rep["estimatedAltitude"] / 100.0,
             "variometer": rep["variometer"] / 100.0,
             "baroAltitude": rep["baroAltitude"] / 100.0,
         }
 
     def get_imu(self) -> Tuple[Dict[str, Any], Dict[str, Dict[str, float]]]:
-        info, rep = self._request(InavMSP.MSP_RAW_IMU)
+        self.info, rep = self._request(InavMSP.MSP_RAW_IMU)
         axes = ("X", "Y", "Z")
-        return info, {
+        return {
             "acc": {axis: rep[f"acc{axis}"] / 512.0 for axis in axes},
             "gyro": {axis: rep[f"gyro{axis}"] for axis in axes},
             "mag": {axis: rep[f"mag{axis}"] for axis in axes},
         }
 
     def get_rc_channels(self) -> Tuple[Dict[str, Any], List[int]]:
-        info, payload = self._request_raw(InavMSP.MSP_RC)
+        self.info, payload = self._request_raw(InavMSP.MSP_RC)
         channel_width = 2
         if len(payload) % channel_width:
             raise ValueError("RC payload not aligned to 16-bit channel width")
         channel_count = len(payload) // channel_width
         values = list(struct.unpack(f"<{channel_count}H", payload)) if channel_count else []
-        return info, values
+        return values
 
     def get_ch(self, channel: Union[int, str]) -> Tuple[Dict[str, Any], int]:
         """
@@ -486,10 +478,10 @@ class MSPApi:
         or by the friendly name defined in the RX map (e.g. 'pitch').
         """
         idx = self._resolve_channel_index(channel)
-        info, channels = self.get_rc_channels()
+        self.info, channels = self.get_rc_channels()
         if idx >= len(channels):
             raise IndexError(f"Channel index {idx} is out of range for RC payload of size {len(channels)}")
-        return info, channels[idx]
+        return channels[idx]
         
     def set_rc_channels(self, channels: Union[Sequence[int], Mapping[Union[int, str], int]]) -> Tuple[Dict[str, Any], Mapping[str, Any]]:
         if isinstance(channels, Mapping):
@@ -524,8 +516,8 @@ class MSPApi:
         return values
 
     def get_battery_config(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        info, rep = self._request(InavMSP.MSP2_INAV_BATTERY_CONFIG)
-        return info, {
+        self.info, rep = self._request(InavMSP.MSP2_INAV_BATTERY_CONFIG)
+        return {
             "vbatScale": rep["vbatScale"],
             "vbatSource": InavEnums.batVoltageSource_e(rep["vbatSource"]),
             "cellCount": rep["cellCount"],
@@ -542,9 +534,9 @@ class MSPApi:
         }
 
     def get_gps_statistics(self) -> Tuple[Dict[str, Any], Dict[str, float]]:
-        info, rep = self._request(InavMSP.MSP_GPSSTATISTICS)
+        self.info, rep = self._request(InavMSP.MSP_GPSSTATISTICS)
         packet_count = max(rep["packetCount"], 1)
-        return info, {
+        return {
             "lastMessageDt": rep["lastMessageDt"] / 1000.0,
             "errors": rep["errors"] / packet_count,
             "timeouts": rep["timeouts"] / packet_count,
@@ -554,7 +546,7 @@ class MSPApi:
         }
 
     def get_waypoint_info(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        info, rep = self._request(InavMSP.MSP_WP_GETINFO)
+        self.info, rep = self._request(InavMSP.MSP_WP_GETINFO)
         mission_valid = bool(rep["missionValid"])
         payload = {
             "wpCapabilities": rep["wpCapabilities"],
@@ -565,12 +557,12 @@ class MSPApi:
         if mission_valid:
             remaining = rep["maxWaypoints"] - rep["waypointCount"]
             payload["waypointsRemaining"] = max(remaining, 0)
-        return info, payload
+        return payload
 
     def get_raw_gps(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        info, rep = self._request(InavMSP.MSP_RAW_GPS)
+        self.info, rep = self._request(InavMSP.MSP_RAW_GPS)
         ground_course = rep["groundCourse"] / 10.0 if "groundCourse" in rep else rep["speed"] / 10.0
-        return info, {
+        return {
             "fixType": InavEnums.gpsFixType_e(rep["fixType"]),
             "numSat": rep["numSat"],
             "latitude": rep["latitude"] / 1e7,
@@ -611,8 +603,8 @@ class MSPApi:
 
     def get_waypoint(self, waypoint_index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         payload = self._pack_request(InavMSP.MSP_WP, {"waypointIndex": waypoint_index})
-        info, rep = self._request(InavMSP.MSP_WP, payload)
-        return info, {
+        self.info, rep = self._request(InavMSP.MSP_WP, payload)
+        return {
             "waypointIndex": rep["waypointIndex"],
             "action": InavEnums.navWaypointActions_e(rep["action"]),
             "latitude": rep["latitude"] / 1e7,
@@ -625,8 +617,8 @@ class MSPApi:
         }
 
     def get_nav_status(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        info, rep = self._request(InavMSP.MSP_NAV_STATUS)
-        return info, {
+        self.info, rep = self._request(InavMSP.MSP_NAV_STATUS)
+        return {
             "navMode": InavEnums.navSystemStatus_Mode_e(rep["navMode"]),
             "navState": InavEnums.navigationFSMState_t(rep["navState"]),
             "activeWaypoint": {
@@ -643,25 +635,22 @@ class MSPApi:
         Falls back to MSP2_INAV_STATUS or MSP_ACTIVEBOXES if MSP_NAV_STATUS does not provide the bitmask.
         """
         self._ensure_box_ids_cached()
-        info, nav_status = self.get_nav_status()
+        nav_status = self.get_nav_status()
         raw_modes = nav_status.get("activeModes")
         has_raw_modes = "activeModes" in nav_status
         mask = self._active_mode_mask_from_raw(raw_modes)
-        source_info = info
 
         if not has_raw_modes:
-            info, status = self.get_inav_status()
+            status = self.get_inav_status()
             raw_modes = status.get("activeModes")
             has_raw_modes = "activeModes" in status
             mask = self._active_mode_mask_from_raw(raw_modes)
-            source_info = info
 
         if not has_raw_modes:
-            info, rep = self._request(InavMSP.MSP_ACTIVEBOXES)
+            self.info, rep = self._request(InavMSP.MSP_ACTIVEBOXES)
             mask = self._active_mode_mask_from_raw(rep.get("activeModes"))
-            source_info = info
 
-        return source_info, self._decode_active_modes_mask(mask)
+        return self._decode_active_modes_mask(mask)
 
     def set_simulator(
         self,
@@ -730,8 +719,8 @@ class MSPApi:
                 "extFlags": ext_flags,
             },
         )
-        info, raw_reply = self._request_raw(InavMSP.MSP_SIMULATOR, payload)
+        self.info, raw_reply = self._request_raw(InavMSP.MSP_SIMULATOR, payload)
         if not raw_reply:
-            return info, {}
-        return info, self._codec.unpack_reply(InavMSP.MSP_SIMULATOR, raw_reply)
+            return {}
+        return self._codec.unpack_reply(InavMSP.MSP_SIMULATOR, raw_reply)
     

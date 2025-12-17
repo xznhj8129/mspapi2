@@ -624,6 +624,8 @@ class MSPSerial:
         *,
         suppress_keepalive: bool = False,
     ) -> Tuple[int, bytes]:
+        code_int = int(code)
+        code_label = f"{code_int} ({InavMSP(code_int).name})"
         if not suppress_keepalive:
             self._run_keepalive_if_needed()
 
@@ -634,11 +636,11 @@ class MSPSerial:
         while True:
             remaining = end - time.monotonic()
             if remaining <= 0.0:
-                raise TimeoutError(f"MSP request timeout for code {code}")
+                raise TimeoutError(f"MSP request timeout for code {code_label}")
             try:
                 msg: MSPMessage = q.get(timeout=remaining)
             except Empty:
-                raise TimeoutError(f"MSP request timeout for code {code}")
+                raise TimeoutError(f"MSP request timeout for code {code_label}")
             return (msg.code, msg.payload)
 
     def _run_keepalive_if_needed(self) -> None:
