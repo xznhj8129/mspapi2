@@ -53,8 +53,8 @@ with MSPApi(port="/dev/ttyACM0") as api:
     info, gps = api.get_raw_gps()
 
     if gps['fixType'] > 0:
-        print(f"Position: {gps['lat']}, {gps['lon']}")
-        print(f"Altitude: {gps['alt']}m")
+        print(f"Position: {gps['latitude']}, {gps['longitude']}")
+        print(f"Altitude: {gps['altitude']}m")
         print(f"Satellites: {gps['numSat']}")
         print(f"Speed: {gps['speed']} cm/s")
     else:
@@ -67,8 +67,8 @@ with MSPApi(port="/dev/ttyACM0") as api:
 with MSPApi(port="/dev/ttyACM0") as api:
     info, analog = api.get_inav_analog()
 
-    print(f"Battery: {analog['batteryVoltage']}V")
-    print(f"Current: {analog['amperage']}A")
+    print(f"Battery: {analog['vbat'] / 100.0:.2f}V")  # vbat is in centivolts
+    print(f"Current: {analog['amperage'] / 100.0:.2f}A")  # amperage is in centiamps
     print(f"mAh drawn: {analog['mAhDrawn']}mAh")
 ```
 
@@ -268,9 +268,9 @@ with MSPApi(port="/dev/ttyACM0") as api:
     info, nav = api.get_nav_status()
 
     # Process all at once
-    print(f"Position: {gps['lat']}, {gps['lon']}")
-    print(f"Altitude: {gps['alt']}m")
-    print(f"Battery: {battery['batteryVoltage']}V")
+    print(f"Position: {gps['latitude']}, {gps['longitude']}")
+    print(f"Altitude: {gps['altitude']}m")
+    print(f"Battery: {battery['vbat'] / 100.0:.2f}V")
 ```
 
 ### Context Manager (Recommended)

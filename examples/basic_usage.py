@@ -67,14 +67,14 @@ def main():
         # Get altitude
         info, altitude = api.get_altitude()
         print(f"\nAltitude:")
-        print(f"  Estimated: {altitude['estimatedActualPosition']:6.1f}m")
-        print(f"  Velocity:  {altitude['estimatedActualVelocity']:6.2f}m/s")
+        print(f"  Estimated: {altitude['estimatedAltitude']:6.1f}cm")
+        print(f"  Variometer: {altitude['variometer']:6.1f}cm/s")
 
         # Get battery/power
         info, analog = api.get_inav_analog()
         print(f"\nPower:")
-        print(f"  Battery:  {analog['batteryVoltage']:5.2f}V")
-        print(f"  Current:  {analog['amperage']:5.2f}A")
+        print(f"  Battery:  {analog['vbat'] / 100.0:5.2f}V")  # vbat is in centivolts
+        print(f"  Current:  {analog['amperage'] / 100.0:5.2f}A")  # amperage is in centiamps
         print(f"  Consumed: {analog['mAhDrawn']:5.0f}mAh")
 
         # Get GPS (may not have fix)
@@ -83,8 +83,8 @@ def main():
         if gps['fixType'] > 0:
             print(f"  Fix Type:    {gps['fixType']}")
             print(f"  Satellites:  {gps['numSat']}")
-            print(f"  Position:    {gps['lat']}, {gps['lon']}")
-            print(f"  Altitude:    {gps['alt']}m")
+            print(f"  Position:    {gps['latitude']}, {gps['longitude']}")
+            print(f"  Altitude:    {gps['altitude']}m")
             print(f"  Speed:       {gps['speed']} cm/s")
             print(f"  Ground Course: {gps['groundCourse']}°")
         else:

@@ -128,13 +128,14 @@ class FlightComputer:
         alt = telemetry['altitude']
 
         # Battery checks
-        if battery['batteryVoltage'] < self.CRITICAL_BATTERY_VOLTAGE:
-            logging.critical(f"CRITICAL: Battery voltage {battery['batteryVoltage']}V - LAND NOW!")
+        voltage = battery['vbat'] / 100.0  # Convert centivolts to volts
+        if voltage < self.CRITICAL_BATTERY_VOLTAGE:
+            logging.critical(f"CRITICAL: Battery voltage {voltage:.2f}V - LAND NOW!")
             return False
 
-        if battery['batteryVoltage'] < self.LOW_BATTERY_VOLTAGE:
+        if voltage < self.LOW_BATTERY_VOLTAGE:
             if 'low_battery' not in self.warnings_issued:
-                logging.warning(f"LOW BATTERY: {battery['batteryVoltage']}V")
+                logging.warning(f"LOW BATTERY: {voltage:.2f}V")
                 self.warnings_issued.add('low_battery')
 
         # GPS checks
@@ -150,9 +151,10 @@ class FlightComputer:
                 self.warnings_issued.add('few_sats')
 
         # Altitude check
-        if alt['estimatedActualPosition'] > self.MAX_ALTITUDE:
+        altitude_m = alt['estimatedAltitude'] / 100.0  # Convert cm to meters
+        if altitude_m > self.MAX_ALTITUDE:
             if 'high_alt' not in self.warnings_issued:
-                logging.warning(f"Altitude {alt['estimatedActualPosition']}m exceeds max {self.MAX_ALTITUDE}m")
+                logging.warning(f"Altitude {altitude_m:.1f}m exceeds max {self.MAX_ALTITUDE}m")
                 self.warnings_issued.add('high_alt')
 
         return True
@@ -176,7 +178,7 @@ class FlightComputer:
         logging.info(
             f"Attitude: R={attitude['roll']:6.1f}° P={attitude['pitch']:6.1f}° Y={attitude['yaw']:6.1f}° | "
             f"GPS: {gps['fixType']} fix, {gps['numSat']} sats | "
-            f"Battery: {battery['batteryVoltage']:.2f}V | "
+            f"Battery: {battery['vbat'] / 100.0:.2f}V | "
             f"Nav: {nav_state}"
         )
 
@@ -248,7 +250,7 @@ class FlightComputer:
                 # Your autonomous logic here
                 # Example: simple altitude hold at 50m
                 # if telemetry and telemetry['gps']['fixType'] > 0:
-                #     current_alt = telemetry['altitude']['estimatedActualPosition']
+                #     current_alt = telemetry['altitude']['estimatedAltitude'] / 100.0  # cm to m
                 #     if current_alt < 45:
                 #         # Set waypoint above current position
                 #         self.set_waypoint_safe(

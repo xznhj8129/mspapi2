@@ -118,7 +118,7 @@ with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
         _, nav = api.get_nav_status()
 
         # Make decisions
-        if battery['batteryVoltage'] < 10.5:
+        if battery['vbat'] / 100.0 < 10.5:  # vbat is in centivolts
             print("Low battery - trigger RTH!")
             # Set mode or waypoint for return to home
 
@@ -214,7 +214,7 @@ with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
 
             # Calculate safe waypoint
             new_lat, new_lon = calculate_avoidance_waypoint(
-                gps['lat'], gps['lon'], attitude['yaw']
+                gps['latitude'], gps['longitude'], attitude['yaw']
             )
 
             # Command aircraft to avoid
@@ -223,7 +223,7 @@ with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
                 action=InavEnums.navWaypointActions_e.NAV_WP_ACTION_WAYPOINT,
                 latitude=new_lat,
                 longitude=new_lon,
-                altitude=gps['alt'],  # Maintain current altitude
+                altitude=gps['altitude'],  # Maintain current altitude
                 flag=0
             )
             print("Obstacle detected - avoiding!")
@@ -376,7 +376,7 @@ logging.basicConfig(
 
 with MSPApi(port="/dev/ttyAMA0") as api:
     _, gps = api.get_raw_gps()
-    logging.info(f"GPS: {gps['lat']}, {gps['lon']}, alt={gps['alt']}m")
+    logging.info(f"GPS: {gps['latitude']}, {gps['longitude']}, alt={gps['altitude']}m")
 ```
 
 ## Troubleshooting
