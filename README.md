@@ -15,6 +15,7 @@ pip install -e .
 ## Documentation
 
 - **[Getting Started](docs/GETTING_STARTED.md)** - Quick start guide and basic usage
+- **[Flight Computer Setup](docs/FLIGHT_COMPUTER.md)** - Using mspapi2 on Raspberry Pi/companion computers
 - **[Discovering Message Fields](docs/DISCOVERING_FIELDS.md)** - How to find message structure
 - **[Server Setup](docs/SERVER.md)** - Using the TCP server for multi-client access
 - **[Examples](examples/)** - Working code examples

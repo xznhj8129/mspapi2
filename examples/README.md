@@ -73,6 +73,31 @@ python examples/logic_conditions.py --port /dev/ttyACM0 --index 0
 
 This pattern works for all 249 MSP messages!
 
+### flight_computer.py
+
+Complete flight computer example for Raspberry Pi/companion computers.
+
+```bash
+# On Raspberry Pi connected to flight controller
+python examples/flight_computer.py --port /dev/ttyAMA0 --rate 0.1
+```
+
+**Shows:**
+- Continuous telemetry monitoring
+- Safety checks (battery, GPS, altitude)
+- Setting waypoints programmatically
+- Error handling and reconnection
+- Logging for post-flight analysis
+- Production-ready structure
+
+**Perfect for:**
+- Obstacle avoidance systems
+- Follow-me implementations
+- Autonomous missions
+- Monitoring and alerts
+
+See **[Flight Computer Guide](../docs/FLIGHT_COMPUTER.md)** for detailed setup and usage.
+
 ## Creating Your Own Examples
 
 ### Template for Simple Example

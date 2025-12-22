@@ -8,6 +8,18 @@ pip install mspapi2
 pip install -e .
 ```
 
+## Common Use Cases
+
+mspapi2 is designed for:
+
+- **Ground Stations** - Monitor telemetry, configure settings
+- **Flight Computers** - Autonomous navigation on Raspberry Pi/companion computers
+- **Mission Planning** - Upload waypoints, configure missions
+- **Telemetry Logging** - Record flight data
+- **Testing & Development** - Test MSP implementations
+
+**Running on a flight computer?** See **[Flight Computer Guide](./FLIGHT_COMPUTER.md)** for Raspberry Pi setup and autonomous navigation examples.
+
 ## Your First Connection
 
 ```python
