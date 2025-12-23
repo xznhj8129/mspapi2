@@ -12,6 +12,14 @@ pip install .
 pip install -e .
 ```
 
+## Documentation
+
+- **[Getting Started](docs/GETTING_STARTED.md)** - Quick start guide and basic usage
+- **[Flight Computer Setup](docs/FLIGHT_COMPUTER.md)** - Using mspapi2 on Raspberry Pi/companion computers
+- **[Discovering Message Fields](docs/DISCOVERING_FIELDS.md)** - How to find message structure
+- **[Server Setup](docs/SERVER.md)** - Using the TCP server for multi-client access
+- **[Examples](examples/)** - Working code examples
+
 ## Components
 - `mspcodec.py`: packs/unpacks MSP payloads from the schema. No defaults, errors are raised on mismatch.
 - `msp_serial.py`: MSP v1/v2 transport over serial or TCP with bounded payloads (MAX_PAYLOAD_LEN=4096), background reader, retries, and explicit failures on queue overflow or keepalive errors.
