@@ -121,26 +121,16 @@ class MSPApi:
         info: Dict[str, Any] = {
             "code": code_int,
             "latency_ms": None,
-            "scheduled": False,
-            "schedule_delay_s": None,
             "transport": None,
             "attempt": None,
-            "timestamp": None,
-            "server": None,
-            "client": None,
-            "code_stats": None,
+            "timestamp": None
         }
         if not diag:
             return info
         info["latency_ms"] = diag.get("duration_ms")
-        info["scheduled"] = bool(diag.get("scheduled"))
-        info["schedule_delay_s"] = diag.get("schedule_delay")
         info["transport"] = diag.get("transport")
         info["attempt"] = diag.get("attempt")
         info["timestamp"] = diag.get("timestamp")
-        info["server"] = diag.get("server")
-        info["client"] = diag.get("client")
-        info["code_stats"] = diag.get("code_stats")
         info["raw"] = diag
         return info
 
@@ -215,42 +205,43 @@ class MSPApi:
             raise ValueError("Channel index must be non-negative")
         return idx
 
-    @staticmethod
-    def _active_mode_mask_from_raw(raw_modes: Any) -> int:
+    def _active_mode_mask_from_raw(self, raw_modes: Any) -> int:
         if raw_modes is None:
             return 0
         if isinstance(raw_modes, int):
             return raw_modes
         mask = 0
         if isinstance(raw_modes, list):
+            box_ids_map = {
+                pid: idx
+                for idx, pid in enumerate(self._ensure_box_ids_cached())
+            }
             for mode in raw_modes:
                 if not isinstance(mode, Mapping):
+                    try:
+                        permanent_id = int(mode)
+                    except (TypeError, ValueError):
+                        continue
+                    idx = box_ids_map.get(permanent_id)
+                    if idx is None:
+                        continue
+                    mask |= 1 << idx
                     continue
                 box_index = mode.get("boxIndex")
                 if box_index is None:
                     continue
-                try:
-                    mask |= 1 << int(box_index)
-                except (TypeError, ValueError):
-                    continue
+                mask |= 1 << int(box_index)
         return mask
 
-    def _decode_active_modes_mask(self, mask: Optional[int]) -> List[Dict[str, Any]]:
+    def _decode_active_modes_mask(self, mask: Optional[int]) -> List[boxes.BoxEnum]:
         if not mask:
             return []
         box_ids = self._ensure_box_ids_cached()
-        active_modes: List[Dict[str, Any]] = []
+        active_modes: List[boxes.BoxEnum] = []
         for idx, permanent_id in enumerate(box_ids):
             if not (mask & (1 << idx)):
                 continue
-            box_info = boxes.MODEBOXES.get(permanent_id, {})
-            active_modes.append(
-                {
-                    "boxIndex": idx,
-                    "permanentId": permanent_id,
-                    "boxName": box_info.get("boxName", f"UNKNOWN_{permanent_id}"),
-                }
-            )
+            active_modes.append(boxes.BoxEnum(permanent_id))
         return active_modes
 
     # ----- API surface -----
@@ -619,9 +610,9 @@ class MSPApi:
             "targetHeading": rep["targetHeading"],
         }
 
-    def get_active_modes(self) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    def get_active_modes(self) -> List[boxes.BoxEnum]:
         """
-        Returns a decoded list of currently active modes by combining NAV/INAV status data with cached box IDs.
+        Returns a decoded list of currently active BoxEnum values by combining NAV/INAV status data with cached box IDs.
         Falls back to MSP2_INAV_STATUS or MSP_ACTIVEBOXES if MSP_NAV_STATUS does not provide the bitmask.
         """
         self._ensure_box_ids_cached()

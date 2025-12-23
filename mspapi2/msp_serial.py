@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from queue import Queue, Empty, Full
 from typing import Optional, Tuple, Callable, Dict, Deque, List, Any
 from collections import deque
+import enum
 from .lib import *
 
 # ------------------------
@@ -60,6 +61,11 @@ class MSPMessage:
     code: int        # 0..65535
     payload: bytes
     unsupported: bool = False
+
+class MSPResult(enum.IntEnum):
+    MSP_RESULT_ACK = 1
+    MSP_RESULT_ERROR = -1
+    MSP_RESULT_NO_REPLY = 0
 
 
 class MSPUnsupportedError(RuntimeError):

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+from functools import partial
 
 from mspapi2.lib import InavEnums, InavMSP
 from mspapi2.msp_api import MSPApi
+from mspapi2.utils import format_nested_dict
 import time
 from typing import Any, Dict
 
@@ -39,6 +41,7 @@ def show_info(info: Dict[str, Any]) -> None:
 
 def main() -> None:
     args = parse_args()
+    pp = partial(format_nested_dict, start_indent=1)
     port = None if args.tcp else args.port
     with MSPApi(
         port=port,
@@ -49,49 +52,47 @@ def main() -> None:
     ) as api:
         print()
         api_version = api.get_api_version()
-        print("MSP API version:", api_version)
+        print("MSP API version:\n" + pp(api_version))
         show_info(api.info)
 
         print()
         fc_variant = api.get_fc_variant()
-        print("Flight controller variant:", fc_variant)
+        print("Flight controller variant:\n" + pp(fc_variant))
         show_info(api.info)
 
         print()
         board_info = api.get_board_info()
-        print("Board info:", board_info)
+        print("Board info:\n" + pp(board_info))
         show_info(api.info)
 
         print()
         sensor_cfg = api.get_sensor_config()
-        print("Sensor configuration:", sensor_cfg)
+        print("Sensor configuration:\n" + pp(sensor_cfg))
         show_info(api.info)
 
         print()
         mode_ranges = api.get_mode_ranges()
-        print("Mode ranges:")
-        for entry in mode_ranges:
-            print(entry)
+        print("Mode ranges:\n" + pp(mode_ranges))
         show_info(api.info)
 
         print()
         status = api.get_inav_status()
-        print("INAV status:", status)
+        print("INAV status:\n" + pp(status))
         show_info(api.info)
 
         print()
         analog = api.get_inav_analog()
-        print("Analog readings:", analog)
+        print("Analog readings:\n" + pp(analog))
         show_info(api.info)
 
         print()
         rx_config = api.get_rx_config()
-        print("RX config:", rx_config)
+        print("RX config:\n" + pp(rx_config))
         show_info(api.info)
 
         print()
         logic_info, logic_condition = api.get_logic_condition(0)
-        print("Logic condition[0]:", logic_condition)
+        print("Logic condition[0]:\n" + pp(logic_condition))
         show_info(logic_info)
 
         print()
@@ -107,52 +108,53 @@ def main() -> None:
 
         print()
         rx_map = api.get_rx_map()
-        print("RX map:", rx_map)
+        print("RX map:\n" + pp(rx_map))
         show_info(api.info)
 
         print()
         attitude = api.get_attitude()
-        print("Attitude:", attitude)
+        print("Attitude:\n" + pp(attitude))
         show_info(api.info)
 
         print()
         altitude = api.get_altitude()
-        print("Altitude:", altitude)
+        print("Altitude:\n" + pp(altitude))
         show_info(api.info)
 
         print()
         imu = api.get_imu()
-        print("IMU summary:", imu)
+        print("IMU summary:\n" + pp(imu))
         show_info(api.info)
 
         print()
         rc_channels = api.get_rc_channels()
-        print("RC channels:", rc_channels[:6])
+        print("RC channels:\n" + pp(rc_channels[:6] if rc_channels else []))
         show_info(api.info)
 
+        print()
         target_channels = rc_channels[:] if rc_channels else [1500, 1500, 1500, 1500]
         ack = api.set_rc_channels(target_channels)
-        print("SET_RAW_RC ack:", ack)
+        print("SET_RAW_RC ack:\n" + pp(ack))
         show_info(api.info)
 
         print()
         bat_cfg = api.get_battery_config()
-        print("Battery config:", bat_cfg)
+        print("Battery config:\n" + pp(bat_cfg))
         show_info(api.info)
 
         print()
         gps_stats = api.get_gps_statistics()
-        print("GPS statistics:", gps_stats)
+        print("GPS statistics:\n" + pp(gps_stats))
         show_info(api.info)
 
         print()
         wp_info = api.get_waypoint_info()
-        print("Waypoint info:", wp_info)
+        print("Waypoint info:\n" + pp(wp_info))
         show_info(api.info)
 
         print()
         raw_gps = api.get_raw_gps()
-        print("Raw GPS:", raw_gps)
+        print("Raw GPS:", pp(raw_gps))
         show_info(api.info)
 
         print()
@@ -163,21 +165,22 @@ def main() -> None:
             longitude=2.345,
             altitude=15.0,
         )
-        print("SET_WP ack:", set_wp_ack)
+        print("SET_WP ack:\n" + pp(set_wp_ack))
         show_info(api.info)
 
         print()
         waypoint = api.get_waypoint(1)
-        print("Waypoint:", waypoint)
+        print("Waypoint:\n" + pp(waypoint))
         show_info(api.info)
 
         print()
         nav_status = api.get_nav_status()
-        print("Navigation status:", nav_status)
+        print("Navigation status:\n" + pp(nav_status))
         show_info(api.info)
 
+        print()
         active_modes = api.get_active_modes()
-        print("Active modes:", active_modes)
+        print("Active modes:\n" + pp(active_modes))
         show_info(api.info)
 
         """print()

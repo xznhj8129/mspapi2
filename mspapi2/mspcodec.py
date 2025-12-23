@@ -5,10 +5,10 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Iterable, Mapping, Any, Union, Tuple, Sequence
-import enum
 import json
 import struct
 from pathlib import Path
+import enum
 
 bin_type_map = {
     "enum": "B",
@@ -27,12 +27,6 @@ bin_type_map = {
     "boolean": "?",  # normalize to bool
     "boxBitmask_t": "Q",
 }
-
-
-class MSPResult(enum.IntEnum):
-    MSP_RESULT_ACK = 1
-    MSP_RESULT_ERROR = -1
-    MSP_RESULT_NO_REPLY = 0
 
 
 def _load_multiwii_enum(schema_path: Path) -> type[enum.IntEnum]:
