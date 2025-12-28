@@ -63,10 +63,8 @@ class MSPMessage:
     unsupported: bool = False
 
 class MSPResult(enum.IntEnum):
-    MSP_RESULT_ACK = 1
-    MSP_RESULT_ERROR = -1
-    MSP_RESULT_NO_REPLY = 0
-
+    MSP_RESULT_ACK = 0
+    MSP_RESULT_ERROR = 1
 
 class MSPUnsupportedError(RuntimeError):
     pass
@@ -343,10 +341,6 @@ class MSPSerial:
         tcp: bool = False,
         udp: bool = False,
         *,
-        keepalive_code: Optional[int] = None,
-        keepalive_payload: bytes = b"",
-        keepalive_interval: float = 5.0,
-        keepalive_timeout: float = 1.0,
         max_retries: int = 3,
         reconnect_delay: float = 0.5,
         log_path: Optional[str] = "msp.log",
@@ -369,10 +363,6 @@ class MSPSerial:
         else:
             self.transport = "serial"
 
-        self._keepalive_code = int(keepalive_code) if keepalive_code is not None else None
-        self._keepalive_payload = bytes(keepalive_payload)
-        self._keepalive_interval = max(0.0, float(keepalive_interval)) if keepalive_code is not None else 0.0
-        self._keepalive_timeout = max(0.1, float(keepalive_timeout))
         self._max_retries = max(1, int(max_retries))
         self._reconnect_delay = max(0.1, float(reconnect_delay))
         self._log_path = log_path
@@ -398,7 +388,6 @@ class MSPSerial:
         self._wlock = threading.Lock()
         self._q_lock = threading.Lock()
         self._request_lock = threading.Lock()
-        self._running_keepalive = False
 
         self._last_write_ts = 0.0
         self._last_activity = time.monotonic()
@@ -456,7 +445,6 @@ class MSPSerial:
         if self._rx_thread and self._rx_thread.is_alive():
             self._rx_thread.join(timeout=1.0)
         self._rx_thread = None
-        self._running_keepalive = False
         self._reader_error = None
 
         if self._ser:
@@ -683,14 +671,10 @@ class MSPSerial:
         payload: bytes,
         timeout: float,
         force_version: Optional[int],
-        *,
-        suppress_keepalive: bool = False,
     ) -> Tuple[int, bytes]:
         code_int = int(code)
         code_label = self._code_label(code_int)
         self._ensure_reader_ok()
-        if not suppress_keepalive:
-            self._run_keepalive_if_needed()
 
         q = self._get_queue_for_code(code)
         while True:
@@ -712,38 +696,6 @@ class MSPSerial:
             if msg.unsupported:
                 raise MSPUnsupportedError(f"MSP code {code_label}({code_int}) unsupported (! response)")
             return (msg.code, msg.payload)
-
-    def _run_keepalive_if_needed(self) -> None:
-        if (
-            self._keepalive_code is None
-            or self._keepalive_interval <= 0
-            or self._running_keepalive
-        ):
-            return
-        self._ensure_reader_ok()
-        try:
-            self._ensure_open()
-        except Exception:
-            return
-        now = time.monotonic()
-        if now - self._last_activity < self._keepalive_interval:
-            return
-
-        self._running_keepalive = True
-        try:
-            self._request_core(
-                self._keepalive_code,
-                self._keepalive_payload,
-                self._keepalive_timeout,
-                None,
-                suppress_keepalive=True,
-            )
-        except Exception:
-            # Let the caller trigger reconnect logic on failure.
-            pass
-        finally:
-            self._last_activity = time.monotonic()
-            self._running_keepalive = False
 
     @staticmethod
     def _choose_version(code: int, payload: bytes, force_version: Optional[int]) -> int:

@@ -1,4 +1,5 @@
 #!/bin/bash
 SPEC_URL="https://raw.githubusercontent.com/iNavFlight/inav/refs/heads/master/docs/development/msp/msp_messages.json"
 curl "$SPEC_URL" > mspapi2/lib/msp_messages.json
-cp ../inav/docs/development/msp/inav_enums.json mspapi2/lib/inav_enums.json
+ENUMS_URL="https://raw.githubusercontent.com/iNavFlight/inav/refs/heads/master/docs/development/msp/inav_enums.json"
+curl "$ENUMS_URL" > mspapi2/lib/inav_enums.json

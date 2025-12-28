@@ -39,12 +39,12 @@ def format_nested_dict(data, *, indent_step: int = 4, start_indent: int = 0) -> 
                 lines.append(f"{pad}{key}: {render_scalar(value)}")
             return
         if isinstance(node, (list, tuple)):
-            for item in node:
+            for idx, item in enumerate(node):
                 if isinstance(item, (dict, list, tuple)):
-                    lines.append(f"{pad}-")
+                    lines.append(f"{pad}{idx}:")
                     walk(item, depth + 1)
                     continue
-                lines.append(f"{pad}- {render_scalar(item)}")
+                lines.append(f"{pad}{idx}: {render_scalar(item)}")
             return
         lines.append(f"{pad}{render_scalar(node)}")
 

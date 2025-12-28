@@ -44,11 +44,6 @@ class MSPApi:
         schema_path = codec_path or Path(__file__).with_name("lib") / "msp_messages.json"
         self._codec = MSPCodec.from_json_file(str(schema_path))
         endpoint = tcp_endpoint.strip() if tcp_endpoint else None
-        keepalive_kwargs = {
-            "keepalive_code": int(InavMSP.MSP_API_VERSION),
-            "keepalive_interval": 5.0,
-            "keepalive_timeout": 0.5,
-        }
         if serial_transport is not None:
             self._serial = serial_transport
         else:
@@ -61,7 +56,6 @@ class MSPApi:
                     read_timeout=read_timeout_ms / 1000.0,
                     write_timeout=write_timeout_ms / 1000.0,
                     tcp=True,
-                    **keepalive_kwargs,
                 )
             else:
                 if not port:
@@ -71,7 +65,6 @@ class MSPApi:
                     baudrate,
                     read_timeout=read_timeout_ms / 1000.0,
                     write_timeout=write_timeout_ms / 1000.0,
-                    **keepalive_kwargs,
                 )
 
 
@@ -131,7 +124,6 @@ class MSPApi:
         info["transport"] = diag.get("transport")
         info["attempt"] = diag.get("attempt")
         info["timestamp"] = diag.get("timestamp")
-        info["raw"] = diag
         return info
 
     def _capture_info(self, code: Optional[InavMSP]) -> Dict[str, Any]:
@@ -464,7 +456,7 @@ class MSPApi:
             raise IndexError(f"Channel index {idx} is out of range for RC payload of size {len(channels)}")
         return channels[idx]
         
-    def set_rc_channels(self, channels: Union[Sequence[int], Mapping[Union[int, str], int]]) -> Tuple[Dict[str, Any], Mapping[str, Any]]:
+    def set_rc_channels(self, channels: Union[Sequence[int], Mapping[Union[int, str], int]]) -> Mapping[str, Any]:
         if isinstance(channels, Mapping):
             resolved = self._build_channel_frame(channels)
         else:
@@ -472,7 +464,8 @@ class MSPApi:
         if not resolved:
             raise ValueError("channels must not be empty")
         payload = struct.pack(f"<{len(resolved)}H", *resolved)
-        return self._request(InavMSP.MSP_SET_RAW_RC, payload)
+        self.info, rep = self._request(InavMSP.MSP_SET_RAW_RC, payload)
+        return rep
 
     def _build_channel_frame(self, overrides: Mapping[Union[int, str], int]) -> List[int]:
         if not overrides:
@@ -561,11 +554,11 @@ class MSPApi:
         latitude: float,
         longitude: float,
         altitude: float,
-        param1: int = 0,
-        param2: int = 0,
-        param3: int = 0,
-        flag: int = 0,
-    ) -> Tuple[Dict[str, Any], Mapping[str, Any]]:
+        param1: int,
+        param2: int,
+        param3: int,
+        flag: int,
+    ) -> Mapping[str, Any]:
         payload = self._pack_request(
             InavMSP.MSP_SET_WP,
             {
@@ -580,7 +573,8 @@ class MSPApi:
                 "flag": flag,
             },
         )
-        return self._request(InavMSP.MSP_SET_WP, payload)
+        self.info, rep = self._request(InavMSP.MSP_SET_WP, payload)
+        return rep
 
     def get_waypoint(self, waypoint_index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         payload = self._pack_request(InavMSP.MSP_WP, {"waypointIndex": waypoint_index})

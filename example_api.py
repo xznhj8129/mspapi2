@@ -154,7 +154,7 @@ def main() -> None:
 
         print()
         raw_gps = api.get_raw_gps()
-        print("Raw GPS:", pp(raw_gps))
+        print("Raw GPS:\n" + pp(raw_gps))
         show_info(api.info)
 
         print()
@@ -164,6 +164,10 @@ def main() -> None:
             latitude=1.234,
             longitude=2.345,
             altitude=15.0,
+            param1 = 0,
+            param2 = 0,
+            param3 = 0,
+            flag = 0
         )
         print("SET_WP ack:\n" + pp(set_wp_ack))
         show_info(api.info)
