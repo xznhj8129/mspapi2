@@ -183,9 +183,48 @@ def main() -> None:
         show_info(api.info)
 
         print()
+        try:
+            ack_heading = api.set_heading(heading_deg=90)
+            print("SET_HEAD ack:\n" + pp(ack_heading))
+            show_info(api.info)
+        except Exception as exc:
+            print(f"SET_HEAD failed: {exc}")
+
+        print()
         active_modes = api.get_active_modes()
         print("Active modes:\n" + pp(active_modes))
         show_info(api.info)
+
+        print()
+        local_target_info, local_target = api.get_local_target()
+        print("Local target (NEU offsets, cm):\n" + pp(local_target))
+        show_info(local_target_info)
+
+        print()
+        try:
+            ack_local = api.set_local_target(x_cm=100.0, y_cm=0.0, z_cm=0.0)
+            print("SET_LOCAL_TARGET ack:\n" + pp(ack_local))
+            show_info(api.info)
+        except Exception as exc:
+            print(f"SET_LOCAL_TARGET failed (expected if GCSNAV/offboard not active): {exc}")
+
+        print()
+        nav_target_info, nav_target = api.get_nav_target()
+        print("NAV target (global):\n" + pp(nav_target))
+        show_info(nav_target_info)
+
+        print()
+        try:
+            ack_global = api.set_global_target(
+                latitude_deg=raw_gps["latitude"],
+                longitude_deg=raw_gps["longitude"],
+                altitude_m=None,  # keep current altitude
+                altitude_datum=InavEnums.geoAltitudeDatumFlag_e.NAV_WP_TAKEOFF_DATUM,
+            )
+            print("SET_GLOBAL_TARGET ack:\n" + pp(ack_global))
+            show_info(api.info)
+        except Exception as exc:
+            print(f"SET_GLOBAL_TARGET failed (expected if GCSNAV/offboard not active): {exc}")
 
         """print()
         _, simulator_reply = api.set_simulator(
