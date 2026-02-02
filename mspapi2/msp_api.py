@@ -39,11 +39,16 @@ class MSPApi:
         write_timeout_ms: float = 1.0,
         codec_path: Optional[Path] = None,
         tcp_endpoint: Optional[str] = None,
+        udp_endpoint: Optional[str] = None,
+        force_msp_v2: bool = False,
         serial_transport: Optional[Any] = None,
     ) -> None:
         schema_path = codec_path or Path(__file__).with_name("lib") / "msp_messages.json"
         self._codec = MSPCodec.from_json_file(str(schema_path))
         endpoint = tcp_endpoint.strip() if tcp_endpoint else None
+        udp_target = udp_endpoint.strip() if udp_endpoint else None
+        if endpoint and udp_target:
+            raise ValueError("Specify only one of tcp_endpoint or udp_endpoint")
         if serial_transport is not None:
             self._serial = serial_transport
         else:
@@ -56,6 +61,18 @@ class MSPApi:
                     read_timeout=read_timeout_ms / 1000.0,
                     write_timeout=write_timeout_ms / 1000.0,
                     tcp=True,
+                    force_msp_v2=force_msp_v2,
+                )
+            elif udp_target:
+                if ":" not in udp_target:
+                    raise ValueError("udp_endpoint must be in HOST:PORT format")
+                self._serial = MSPSerial(
+                    udp_target,
+                    baudrate,
+                    read_timeout=read_timeout_ms / 1000.0,
+                    write_timeout=write_timeout_ms / 1000.0,
+                    udp=True,
+                    force_msp_v2=True,
                 )
             else:
                 if not port:
@@ -65,6 +82,7 @@ class MSPApi:
                     baudrate,
                     read_timeout=read_timeout_ms / 1000.0,
                     write_timeout=write_timeout_ms / 1000.0,
+                    force_msp_v2=force_msp_v2,
                 )
 
 

@@ -18,6 +18,7 @@ import threading
 import time
 import serial
 import sys
+import socket
 from dataclasses import dataclass
 from queue import Queue, Empty, Full
 from typing import Optional, Tuple, Callable, Dict, Deque, List, Any
@@ -340,6 +341,7 @@ class MSPSerial:
         rx_queue_size: int = 1024,
         tcp: bool = False,
         udp: bool = False,
+        force_msp_v2: bool = False,
         *,
         max_retries: int = 3,
         reconnect_delay: float = 0.5,
@@ -356,6 +358,9 @@ class MSPSerial:
         self.min_gap_s = max(0.0, float(min_gap_s))
         self._use_tcp = tcp
         self._use_udp = udp
+        self._force_msp_v2 = bool(force_msp_v2 or udp)
+        if udp and ":" not in port:
+            raise ValueError("UDP endpoint must be in HOST:PORT format")
         if tcp:
             self.transport = "tcp"
         elif udp:
@@ -376,6 +381,7 @@ class MSPSerial:
         self._reader_error: Optional[BaseException] = None
 
         self._parser = _MSPParser()
+        self._udp_active = False
 
         # Queues for received messages:
         self._rx_all = Queue(maxsize=rx_queue_size)
@@ -397,8 +403,12 @@ class MSPSerial:
     # ---------- lifecycle ----------
 
     def open(self) -> None:
-        if self._ser and self._ser.is_open and self._rx_thread and self._rx_thread.is_alive():
-            return
+        if self._use_udp:
+            if self._ser and self._udp_active and self._rx_thread and self._rx_thread.is_alive():
+                return
+        else:
+            if self._ser and getattr(self._ser, "is_open", False) and self._rx_thread and self._rx_thread.is_alive():
+                return
         self._reader_error = None
         if self._use_tcp:
             url = self.port
@@ -409,6 +419,15 @@ class MSPSerial:
                 timeout=self.read_timeout,
                 write_timeout=self.write_timeout,
             )
+        elif self._use_udp:
+            host, port_str = self.port.split(":", 1)
+            host = host.strip()
+            port_num = int(port_str)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(self.read_timeout)
+            sock.connect((host, port_num))
+            self._ser = sock  # type: ignore[assignment]
+            self._udp_active = True
         else:
             self._ser = serial.Serial(
                 port=self.port,
@@ -449,8 +468,12 @@ class MSPSerial:
 
         if self._ser:
             try:
-                if self._ser.is_open:
+                if self._use_udp:
                     self._ser.close()
+                    self._udp_active = False
+                else:
+                    if getattr(self._ser, "is_open", False):
+                        self._ser.close()
             finally:
                 self._ser = None
 
@@ -472,7 +495,9 @@ class MSPSerial:
         Encode and write a single MSP frame to the port.
         Returns number of bytes written.
         """
-        if not self._ser or not self._ser.is_open:
+        if not self._ser:
+            raise RuntimeError("Serial port is not open")
+        if not self._use_udp and not getattr(self._ser, "is_open", False):
             raise RuntimeError("Serial port is not open")
 
         if payload is None:
@@ -482,7 +507,7 @@ class MSPSerial:
         if len(payload) > MAX_PAYLOAD_LEN:
             raise ValueError(f"payload length {len(payload)} exceeds limit {MAX_PAYLOAD_LEN}")
 
-        ver = self._choose_version(code, payload, force_version)
+        ver = self._choose_version(code, payload, force_version, self._force_msp_v2)
         frame = self._encode(ver, code, payload)
         self._log_io("OUT", frame)
 
@@ -492,8 +517,11 @@ class MSPSerial:
             dt = now - self._last_write_ts
             if dt < self.min_gap_s:
                 time.sleep(self.min_gap_s - dt)
-            n = self._ser.write(frame)
-            self._ser.flush()  # push to driver
+            if self._use_udp:
+                n = self._ser.send(frame)  # type: ignore[operator]
+            else:
+                n = self._ser.write(frame)
+                self._ser.flush()  # push to driver
             self._last_write_ts = time.monotonic()
             self._last_activity = self._last_write_ts
             return n
@@ -555,7 +583,7 @@ class MSPSerial:
                         "error": str(exc),
                         "duration_ms": None,
                         "attempt": attempt,
-                        "transport": "serial",
+                        "transport": self.transport,
                         "timestamp": time.time(),
                     }
                     break
@@ -566,7 +594,7 @@ class MSPSerial:
                         "error": str(exc),
                         "duration_ms": None,
                         "attempt": attempt,
-                        "transport": "serial",
+                        "transport": self.transport,
                         "timestamp": time.time(),
                     }
                     if attempt >= self._max_retries or not self._retry_connection(attempt):
@@ -588,15 +616,21 @@ class MSPSerial:
         try:
             while not self._stop_evt.is_set():
                 try:
-                    chunk = ser.read(4096)
-                    if not chunk:
-                        continue
+                    if self._use_udp:
+                        try:
+                            chunk = ser.recv(4096)  # type: ignore[attr-defined]
+                        except socket.timeout:
+                            continue
+                    else:
+                        chunk = ser.read(4096)
+                        if not chunk:
+                            continue
                     self._last_activity = time.monotonic()
                     self._log_io("IN", chunk)
                     messages = self._parser.feed(chunk)
                     for msg in messages:
                         self._dispatch(msg)
-                except (serial.SerialException, OSError):
+                except (serial.SerialException, OSError, socket.error):
                     self._record_reader_error()
                     break
                 except Exception as exc:
@@ -604,7 +638,10 @@ class MSPSerial:
                     break
         finally:
             try:
-                if ser.is_open:
+                if hasattr(ser, "is_open"):
+                    if ser.is_open:  # type: ignore[attr-defined]
+                        ser.close()
+                else:
                     ser.close()
             except Exception:
                 self._log_io("ERR", b"failed closing serial on reader exit")
@@ -643,9 +680,13 @@ class MSPSerial:
         return self._reconnects
 
     def _ensure_open(self) -> None:
-        if not self._ser or not self._ser.is_open:
-            self.open()
-        elif not self._rx_thread or not self._rx_thread.is_alive():
+        if self._use_udp:
+            if not self._ser or not self._udp_active:
+                self.open()
+        else:
+            if not self._ser or not getattr(self._ser, "is_open", False):
+                self.open()
+        if not self._rx_thread or not self._rx_thread.is_alive():
             self._stop_evt.set()
             self._rx_thread = threading.Thread(target=self._reader_loop, name="MSPSerialReader", daemon=True)
             self._stop_evt.clear()
@@ -698,9 +739,11 @@ class MSPSerial:
             return (msg.code, msg.payload)
 
     @staticmethod
-    def _choose_version(code: int, payload: bytes, force_version: Optional[int]) -> int:
+    def _choose_version(code: int, payload: bytes, force_version: Optional[int], force_msp_v2: bool) -> int:
         if force_version in (1, 2):
             return int(force_version)
+        if force_msp_v2:
+            return 2
         # MSP v2 required for codes >255 or payload >256 (incl. header constraint)
         if code > 0xFF or len(payload) > 0xFF:
             return 2

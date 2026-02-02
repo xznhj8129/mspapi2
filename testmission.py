@@ -9,9 +9,11 @@ from statistics import mean
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="MSP API demo")
-    parser.add_argument("--port", default="/dev/ttyACM0", help="Serial device path (ignored if --tcp is used)")
+    parser.add_argument("--port", default="/dev/ttyACM0", help="Serial device path (ignored if --tcp or --udp is used)")
     parser.add_argument("--baudrate", type=int, default=115200, help="Serial baud rate")
     parser.add_argument("--tcp", metavar="HOST:PORT", help="Connect using TCP socket instead of serial, e.g. localhost:5760")
+    parser.add_argument("--udp", metavar="HOST:PORT", help="Connect using UDP socket instead of serial, e.g. localhost:27072")
+    parser.add_argument("--force-mspv2", action="store_true", help="Force MSP v2 framing")
     parser.add_argument("--read-timeout", type=float, default=1, help="Read timeout in miliseconds")
     parser.add_argument("--write-timeout", type=float, default=1, help="Write timeout in miliseconds")
     return parser.parse_args()
@@ -25,13 +27,17 @@ def data(result):
 
 def main() -> None:
     args = parse_args()
-    port = None if args.tcp else args.port
+    if args.tcp and args.udp:
+        raise ValueError("Provide only one of --tcp or --udp")
+    port = None if (args.tcp or args.udp) else args.port
     with MSPApi(
         port=port,
         baudrate=args.baudrate,
         read_timeout=args.read_timeout,
         write_timeout=args.write_timeout,
         tcp_endpoint=args.tcp,
+        udp_endpoint=args.udp,
+        force_msp_v2=args.force_mspv2,
     ) as api:
         #print()
         #print("MSP API version:", api.get_api_version())

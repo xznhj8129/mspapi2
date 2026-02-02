@@ -11,9 +11,11 @@ from typing import Any, Dict
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="MSP API demo")
-    parser.add_argument("--port", default="/dev/ttyACM0", help="Serial device path (ignored if --tcp is used)")
+    parser.add_argument("--port", default="/dev/ttyACM0", help="Serial device path (ignored if --tcp or --udp is used)")
     parser.add_argument("--baudrate", type=int, default=115200, help="Serial baud rate")
     parser.add_argument("--tcp", metavar="HOST:PORT", help="Connect using TCP socket instead of serial, e.g. localhost:5760")
+    parser.add_argument("--udp", metavar="HOST:PORT", help="Connect using UDP socket instead of serial, e.g. localhost:27072")
+    parser.add_argument("--force-mspv2", action="store_true", help="Force all requests to MSPv2 framing")
     parser.add_argument("--read-timeout", type=float, default=10.0, help="Read timeout in milliseconds")
     parser.add_argument("--write-timeout", type=float, default=250.0, help="Write timeout in milliseconds")
     return parser.parse_args()
@@ -41,14 +43,18 @@ def show_info(info: Dict[str, Any]) -> None:
 
 def main() -> None:
     args = parse_args()
+    if args.tcp and args.udp:
+        raise ValueError("Provide only one of --tcp or --udp")
     pp = partial(format_nested_dict, start_indent=1)
-    port = None if args.tcp else args.port
+    port = None if (args.tcp or args.udp) else args.port
     with MSPApi(
         port=port,
         baudrate=args.baudrate,
         read_timeout_ms=args.read_timeout,
         write_timeout_ms=args.write_timeout,
         tcp_endpoint=args.tcp,
+        udp_endpoint=args.udp,
+        force_msp_v2=args.force_mspv2,
     ) as api:
         print()
         api_version = api.get_api_version()

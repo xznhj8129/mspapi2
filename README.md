@@ -29,6 +29,8 @@ with MSPApi(port="/dev/ttyACM0", baudrate=115200) as api:
     rc_ack = api.set_rc_channels([1500, 1500, 1500, 1500])
 ```
 - For TCP transports, pass `tcp_endpoint="host:port"` and omit `port`.
+- For UDP transports (e.g. via MSP multiplexer), pass `udp_endpoint="host:port"`; MSP v2 will be used.
+- To force MSP v2 framing on serial/TCP, set `force_msp_v2=True`.
 - Diagnostics for the last call live on `api.info` (latency, transport, attempt, timestamp).
 
 ## CLI bridge

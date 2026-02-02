@@ -4,6 +4,7 @@ Minimal MSP API shell.
 
 Examples:
   python msp_shell.py --tcp-endpoint 127.0.0.1:5760
+  python msp_shell.py --udp-endpoint 127.0.0.1:27072 --force-mspv2
   > get_raw_gps
   > set_flight_axis_angle_override pitch_deg=10
   > set_altitude_target altitude_datum=1 altitude_m=50
@@ -103,19 +104,27 @@ def _signature_help(func):
 def main():
     ap = argparse.ArgumentParser(description="Interactive shell for MSPApi")
     ap.add_argument("--tcp-endpoint", help="MSP TCP endpoint in HOST:PORT format")
+    ap.add_argument("--udp-endpoint", help="MSP UDP endpoint in HOST:PORT format")
     ap.add_argument("--port", help="Serial MSP port")
     ap.add_argument("--baudrate", type=int, default=115200, help="Baudrate for serial MSP")
+    ap.add_argument("--force-mspv2", action="store_true", help="Force MSP v2 framing")
     args = ap.parse_args()
 
     init_kwargs = {}
+    if args.tcp_endpoint and args.udp_endpoint:
+        ap.error("Provide only one of --tcp-endpoint or --udp-endpoint")
     if args.tcp_endpoint:
         init_kwargs["tcp_endpoint"] = args.tcp_endpoint
         init_kwargs["port"] = None
+    elif args.udp_endpoint:
+        init_kwargs["udp_endpoint"] = args.udp_endpoint
+        init_kwargs["port"] = None
     else:
         if not args.port:
-            ap.error("Provide --tcp-endpoint or --port")
+            ap.error("Provide --tcp-endpoint, --udp-endpoint or --port")
         init_kwargs["port"] = args.port
         init_kwargs["baudrate"] = args.baudrate
+    init_kwargs["force_msp_v2"] = args.force_mspv2
 
     api = MSPApi(**init_kwargs)
     api.open()

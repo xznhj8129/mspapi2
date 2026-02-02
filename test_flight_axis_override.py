@@ -7,6 +7,7 @@ Sends roll angle and yaw rate overrides for 1s each, with clears in between, re-
 DEFAULT_TCP_ENDPOINT = "127.0.0.1:5760"
 DEFAULT_BAUDRATE = 115200
 DEFAULT_SERIAL_PORT = "/dev/ttyUSB0"
+DEFAULT_UDP_ENDPOINT = "127.0.0.1:27072"
 HOLD_SECONDS = 3.0
 SEND_HZ = 10.0
 
@@ -20,17 +21,25 @@ from mspapi2.lib import boxes
 def main() -> None:
     ap = argparse.ArgumentParser(description="Hardcoded MSP flight-axis override pulse test.")
     ap.add_argument("--tcp-endpoint", default=DEFAULT_TCP_ENDPOINT, help="MSP TCP endpoint in HOST:PORT format")
+    ap.add_argument("--udp-endpoint", default=DEFAULT_UDP_ENDPOINT, help="MSP UDP endpoint in HOST:PORT format")
     ap.add_argument("--port", default=DEFAULT_SERIAL_PORT, help="Serial MSP port")
     ap.add_argument("--baudrate", type=int, default=DEFAULT_BAUDRATE, help="Baudrate for serial MSP")
+    ap.add_argument("--force-mspv2", action="store_true", help="Force MSP v2 framing")
     args = ap.parse_args()
 
     init_kwargs = {}
-    if args.port:
-        init_kwargs["port"] = args.port
-        init_kwargs["baudrate"] = args.baudrate
-    else:
+    if args.tcp_endpoint and args.udp_endpoint:
+        ap.error("Provide only one of --tcp-endpoint or --udp-endpoint")
+    if args.tcp_endpoint:
         init_kwargs["tcp_endpoint"] = args.tcp_endpoint
         init_kwargs["port"] = None
+    elif args.udp_endpoint:
+        init_kwargs["udp_endpoint"] = args.udp_endpoint
+        init_kwargs["port"] = None
+    else:
+        init_kwargs["port"] = args.port
+        init_kwargs["baudrate"] = args.baudrate
+    init_kwargs["force_msp_v2"] = args.force_mspv2
 
     with MSPApi(**init_kwargs) as api:
         api_version = api.get_api_version()
