@@ -33,9 +33,6 @@ with MSPApi(port="/dev/ttyACM0", baudrate=115200) as api:
 - To force MSP v2 framing on serial/TCP, set `force_msp_v2=True`.
 - Diagnostics for the last call live on `api.info` (latency, transport, attempt, timestamp).
 
-## CLI bridge
-`mspapi2-server` starts a TCP bridge to a serial MSP device. Point multiple clients at it to share one FC link.
-
 ## Notes and caveats
 - The codec trusts the JSON schema; if the schema is stale, calls will misdecode. Keep `msp_messages.json` and `inav_enums.json` fresh from INAV.
 - Mode boxes and INAV defines are static snapshots; automatic updates are WIP
