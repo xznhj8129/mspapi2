@@ -97,9 +97,9 @@ def main() -> None:
         show_info(api.info)
 
         print()
-        logic_info, logic_condition = api.get_logic_condition(0)
+        logic_condition = api.get_logic_condition(0)
         print("Logic condition[0]:\n" + pp(logic_condition))
-        show_info(logic_info)
+        show_info(api.info)
 
         print()
         try:
@@ -441,9 +441,9 @@ def main() -> None:
 
         #part of branch, not implemented yet
         """print()
-        local_target_info, local_target = api.get_local_target()
+        local_target = api.get_local_target()
         print("Local target (NEU offsets, cm):\n" + pp(local_target))
-        show_info(local_target_info)
+        show_info(api.info)
 
         print()
         try:
@@ -454,9 +454,9 @@ def main() -> None:
             print(f"SET_LOCAL_TARGET failed (expected if GCSNAV/offboard not active): {exc}")
 
         print()
-        nav_target_info, nav_target = api.get_nav_target()
+        nav_target = api.get_nav_target()
         print("NAV target (global):\n" + pp(nav_target))
-        show_info(nav_target_info)
+        show_info(api.info)
 
         print()
         try:

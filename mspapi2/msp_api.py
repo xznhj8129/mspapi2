@@ -420,7 +420,7 @@ class MSPApi:
         )
         self.info, rep = self._request(InavMSP.MSP2_INAV_LOGIC_CONDITIONS_SINGLE, payload)
         flags_raw = rep["flags"]
-        return self.info, {
+        return {
             "enabled": bool(rep["enabled"]),
             "activatorId": None if rep["activatorId"] == 0xFF else rep["activatorId"],
             "operation": InavEnums.logicOperation_e(rep["operation"]),
@@ -523,6 +523,9 @@ class MSPApi:
             else:
                 raise ValueError(f"Unsupported axis '{axis}' (use roll/pitch/yaw)")
         return mask
+
+    # Experimental functions - only available if corresponding MSP messages exist
+    # These use messages that may not be present in all branches (e.g., refactor branch)
 
     if hasattr(InavMSP, 'MSP2_INAV_FLIGHT_AXIS_ANGLE_OVERRIDE'):
         def set_flight_axis_angle_override(
@@ -767,9 +770,6 @@ class MSPApi:
             "targetHeading": rep["targetHeading"],
         }
 
-    # Conditional methods based on available MSP messages
-    # These are only defined if the corresponding message exists in msp_messages.json
-
     if hasattr(InavMSP, 'MSP2_INAV_SET_ALT_TARGET'):
         def set_altitude_target(
             self,
@@ -807,7 +807,7 @@ class MSPApi:
     if hasattr(InavMSP, 'MSP2_INAV_LOCAL_TARGET'):
         def get_local_target(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             self.info, rep = self._request(InavMSP.MSP2_INAV_LOCAL_TARGET)
-            return self.info, {
+            return {
                 "pos": {
                     "x_cm": rep["posX"],
                     "y_cm": rep["posY"],
@@ -847,7 +847,7 @@ class MSPApi:
     if hasattr(InavMSP, 'MSP2_INAV_NAV_TARGET'):
         def get_nav_target(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             self.info, rep = self._request(InavMSP.MSP2_INAV_NAV_TARGET)
-            return self.info, {
+            return {
                 "latitude": rep["latTarget"] / 1e7,
                 "longitude": rep["lonTarget"] / 1e7,
                 "altitude_m": rep["altitudeTarget"] / 100.0,
