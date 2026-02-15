@@ -400,15 +400,30 @@ class MSPSerial:
         self.last_diag: Optional[Dict[str, Any]] = None
         self._reconnects = 0
 
+    # ---------- helpers ----------
+
+    def _is_open(self) -> bool:
+        """Check if the transport is open."""
+        if not self._ser:
+            return False
+        if self._use_udp:
+            return self._udp_active
+        return getattr(self._ser, "is_open", False)
+
+    @staticmethod
+    def _validate_payload(payload: Optional[bytes]) -> bytes:
+        """Validate and normalize payload."""
+        if payload is None:
+            return b""
+        if not isinstance(payload, (bytes, bytearray)):
+            raise TypeError("payload must be bytes or bytearray")
+        return bytes(payload)
+
     # ---------- lifecycle ----------
 
     def open(self) -> None:
-        if self._use_udp:
-            if self._ser and self._udp_active and self._rx_thread and self._rx_thread.is_alive():
-                return
-        else:
-            if self._ser and getattr(self._ser, "is_open", False) and self._rx_thread and self._rx_thread.is_alive():
-                return
+        if self._is_open() and self._rx_thread and self._rx_thread.is_alive():
+            return
         self._reader_error = None
         if self._use_tcp:
             url = self.port
@@ -442,16 +457,12 @@ class MSPSerial:
                 dsrdtr=False,
             )
         # Clear buffers
-        if hasattr(self._ser, "reset_input_buffer"):
-            try:
-                self._ser.reset_input_buffer()
-            except Exception:
-                pass
-        if hasattr(self._ser, "reset_output_buffer"):
-            try:
-                self._ser.reset_output_buffer()
-            except Exception:
-                pass
+        for method in ("reset_input_buffer", "reset_output_buffer"):
+            if hasattr(self._ser, method):
+                try:
+                    getattr(self._ser, method)()
+                except (OSError, serial.SerialException):
+                    pass
 
         # Start reader thread
         self._stop_evt.clear()
@@ -468,12 +479,11 @@ class MSPSerial:
 
         if self._ser:
             try:
+                self._ser.close()
                 if self._use_udp:
-                    self._ser.close()
                     self._udp_active = False
-                else:
-                    if getattr(self._ser, "is_open", False):
-                        self._ser.close()
+            except (OSError, serial.SerialException):
+                pass
             finally:
                 self._ser = None
 
@@ -495,15 +505,10 @@ class MSPSerial:
         Encode and write a single MSP frame to the port.
         Returns number of bytes written.
         """
-        if not self._ser:
-            raise RuntimeError("Serial port is not open")
-        if not self._use_udp and not getattr(self._ser, "is_open", False):
+        if not self._is_open():
             raise RuntimeError("Serial port is not open")
 
-        if payload is None:
-            payload = b""
-        if not isinstance(payload, (bytes, bytearray)):
-            raise TypeError("payload must be bytes or bytearray")
+        payload = self._validate_payload(payload)
         if len(payload) > MAX_PAYLOAD_LEN:
             raise ValueError(f"payload length {len(payload)} exceeds limit {MAX_PAYLOAD_LEN}")
 
@@ -537,11 +542,7 @@ class MSPSerial:
         Send a frame and wait for the matching response (same code coming FROM FC).
         Returns (code, payload) and raises on transport failures.
         """
-        if payload is None:
-            payload = b""
-        if not isinstance(payload, (bytes, bytearray)):
-            raise TypeError("payload must be bytes or bytearray")
-        payload_bytes = bytes(payload)
+        payload_bytes = self._validate_payload(payload)
 
         with self._request_lock:
             last_error: Optional[Exception] = None
@@ -638,12 +639,8 @@ class MSPSerial:
                     break
         finally:
             try:
-                if hasattr(ser, "is_open"):
-                    if ser.is_open:  # type: ignore[attr-defined]
-                        ser.close()
-                else:
-                    ser.close()
-            except Exception:
+                ser.close()
+            except (OSError, serial.SerialException):
                 self._log_io("ERR", b"failed closing serial on reader exit")
             self._ser = None
 
@@ -680,12 +677,8 @@ class MSPSerial:
         return self._reconnects
 
     def _ensure_open(self) -> None:
-        if self._use_udp:
-            if not self._ser or not self._udp_active:
-                self.open()
-        else:
-            if not self._ser or not getattr(self._ser, "is_open", False):
-                self.open()
+        if not self._is_open():
+            self.open()
         if not self._rx_thread or not self._rx_thread.is_alive():
             self._stop_evt.set()
             self._rx_thread = threading.Thread(target=self._reader_loop, name="MSPSerialReader", daemon=True)
@@ -713,8 +706,7 @@ class MSPSerial:
         timeout: float,
         force_version: Optional[int],
     ) -> Tuple[int, bytes]:
-        code_int = int(code)
-        code_label = self._code_label(code_int)
+        code_label = self._code_label(code)
         self._ensure_reader_ok()
 
         q = self._get_queue_for_code(code)
@@ -729,13 +721,13 @@ class MSPSerial:
         while True:
             remaining = end - time.monotonic()
             if remaining <= 0.0:
-                raise TimeoutError(f"MSP request timeout waiting for {code_label}({code_int})")
+                raise TimeoutError(f"MSP request timeout waiting for {code_label}")
             try:
                 msg: MSPMessage = q.get(timeout=remaining)
             except Empty:
-                raise TimeoutError(f"MSP request timeout waiting for {code_label}({code_int})")
+                raise TimeoutError(f"MSP request timeout waiting for {code_label}")
             if msg.unsupported:
-                raise MSPUnsupportedError(f"MSP code {code_label}({code_int}) unsupported (! response)")
+                raise MSPUnsupportedError(f"MSP code {code_label} unsupported (! response)")
             return (msg.code, msg.payload)
 
     @staticmethod
@@ -809,7 +801,7 @@ class MSPSerial:
     def _code_label(self, code: int) -> str:
         try:
             return f"{code} ({InavMSP(code).name})"
-        except Exception:
+        except (ValueError, KeyError):
             return str(code)
 
     def _log_io(self, direction: str, data: Any) -> None:

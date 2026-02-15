@@ -524,129 +524,131 @@ class MSPApi:
                 raise ValueError(f"Unsupported axis '{axis}' (use roll/pitch/yaw)")
         return mask
 
-    def set_flight_axis_angle_override(
-        self,
-        *,
-        roll_deg: Optional[float] = None,
-        pitch_deg: Optional[float] = None,
-        yaw_deg: Optional[float] = None,
-    ) -> Mapping[str, Any]:
-        if roll_deg is None and pitch_deg is None and yaw_deg is None:
+    if hasattr(InavMSP, 'MSP2_INAV_FLIGHT_AXIS_ANGLE_OVERRIDE'):
+        def set_flight_axis_angle_override(
+            self,
+            *,
+            roll_deg: Optional[float] = None,
+            pitch_deg: Optional[float] = None,
+            yaw_deg: Optional[float] = None,
+        ) -> Mapping[str, Any]:
+            if roll_deg is None and pitch_deg is None and yaw_deg is None:
+                payload = self._pack_request(
+                    InavMSP.MSP2_INAV_FLIGHT_AXIS_ANGLE_OVERRIDE,
+                    {
+                        "overrideMask": 0,
+                        "angleTargetRoll": 0,
+                        "angleTargetPitch": 0,
+                        "angleTargetYaw": 0,
+                    },
+                )
+                self.info, rep = self._request(InavMSP.MSP2_INAV_FLIGHT_AXIS_ANGLE_OVERRIDE, payload)
+                return rep
+
+            mask = 0
+            roll_target = 0
+            pitch_target = 0
+            yaw_target = 0
+
+            if roll_deg is not None:
+                mask |= 0x01
+                roll_target = int(round(roll_deg * 10.0))
+            if pitch_deg is not None:
+                mask |= 0x02
+                pitch_target = int(round(pitch_deg * 10.0))
+            if yaw_deg is not None:
+                mask |= 0x04
+                yaw_target = int(round(yaw_deg * 10.0))
+
+            if roll_target < -32768:
+                roll_target = -32768
+            if roll_target > 32767:
+                roll_target = 32767
+
+            if pitch_target < -32768:
+                pitch_target = -32768
+            if pitch_target > 32767:
+                pitch_target = 32767
+
+            if yaw_target < 0:
+                yaw_target = 0
+            if yaw_target > 3600:
+                yaw_target = 3600
+
             payload = self._pack_request(
                 InavMSP.MSP2_INAV_FLIGHT_AXIS_ANGLE_OVERRIDE,
                 {
-                    "overrideMask": 0,
-                    "angleTargetRoll": 0,
-                    "angleTargetPitch": 0,
-                    "angleTargetYaw": 0,
+                    "overrideMask": mask,
+                    "angleTargetRoll": roll_target,
+                    "angleTargetPitch": pitch_target,
+                    "angleTargetYaw": yaw_target,
                 },
             )
             self.info, rep = self._request(InavMSP.MSP2_INAV_FLIGHT_AXIS_ANGLE_OVERRIDE, payload)
             return rep
 
-        mask = 0
-        roll_target = 0
-        pitch_target = 0
-        yaw_target = 0
+    if hasattr(InavMSP, 'MSP2_INAV_FLIGHT_AXIS_RATE_OVERRIDE'):
+        def set_flight_axis_rate_override(
+            self,
+            *,
+            roll_dps: Optional[float] = None,
+            pitch_dps: Optional[float] = None,
+            yaw_dps: Optional[float] = None,
+        ) -> Mapping[str, Any]:
+            if roll_dps is None and pitch_dps is None and yaw_dps is None:
+                payload = self._pack_request(
+                    InavMSP.MSP2_INAV_FLIGHT_AXIS_RATE_OVERRIDE,
+                    {
+                        "overrideMask": 0,
+                        "rateTargetRoll": 0,
+                        "rateTargetPitch": 0,
+                        "rateTargetYaw": 0,
+                    },
+                )
+                self.info, rep = self._request(InavMSP.MSP2_INAV_FLIGHT_AXIS_RATE_OVERRIDE, payload)
+                return rep
 
-        if roll_deg is not None:
-            mask |= 0x01
-            roll_target = int(round(roll_deg * 10.0))
-        if pitch_deg is not None:
-            mask |= 0x02
-            pitch_target = int(round(pitch_deg * 10.0))
-        if yaw_deg is not None:
-            mask |= 0x04
-            yaw_target = int(round(yaw_deg * 10.0))
-
-        if roll_target < -32768:
-            roll_target = -32768
-        if roll_target > 32767:
-            roll_target = 32767
-
-        if pitch_target < -32768:
-            pitch_target = -32768
-        if pitch_target > 32767:
-            pitch_target = 32767
-
-        if yaw_target < 0:
+            mask = 0
+            roll_target = 0
+            pitch_target = 0
             yaw_target = 0
-        if yaw_target > 3600:
-            yaw_target = 3600
 
-        payload = self._pack_request(
-            InavMSP.MSP2_INAV_FLIGHT_AXIS_ANGLE_OVERRIDE,
-            {
-                "overrideMask": mask,
-                "angleTargetRoll": roll_target,
-                "angleTargetPitch": pitch_target,
-                "angleTargetYaw": yaw_target,
-            },
-        )
-        self.info, rep = self._request(InavMSP.MSP2_INAV_FLIGHT_AXIS_ANGLE_OVERRIDE, payload)
-        return rep
+            if roll_dps is not None:
+                mask |= 0x01
+                roll_target = int(round(roll_dps))
+            if pitch_dps is not None:
+                mask |= 0x02
+                pitch_target = int(round(pitch_dps))
+            if yaw_dps is not None:
+                mask |= 0x04
+                yaw_target = int(round(yaw_dps))
 
-    def set_flight_axis_rate_override(
-        self,
-        *,
-        roll_dps: Optional[float] = None,
-        pitch_dps: Optional[float] = None,
-        yaw_dps: Optional[float] = None,
-    ) -> Mapping[str, Any]:
-        if roll_dps is None and pitch_dps is None and yaw_dps is None:
+            if roll_target < -2000:
+                roll_target = -2000
+            if roll_target > 2000:
+                roll_target = 2000
+
+            if pitch_target < -2000:
+                pitch_target = -2000
+            if pitch_target > 2000:
+                pitch_target = 2000
+
+            if yaw_target < -2000:
+                yaw_target = -2000
+            if yaw_target > 2000:
+                yaw_target = 2000
+
             payload = self._pack_request(
                 InavMSP.MSP2_INAV_FLIGHT_AXIS_RATE_OVERRIDE,
                 {
-                    "overrideMask": 0,
-                    "rateTargetRoll": 0,
-                    "rateTargetPitch": 0,
-                    "rateTargetYaw": 0,
+                    "overrideMask": mask,
+                    "rateTargetRoll": roll_target,
+                    "rateTargetPitch": pitch_target,
+                    "rateTargetYaw": yaw_target,
                 },
             )
             self.info, rep = self._request(InavMSP.MSP2_INAV_FLIGHT_AXIS_RATE_OVERRIDE, payload)
             return rep
-
-        mask = 0
-        roll_target = 0
-        pitch_target = 0
-        yaw_target = 0
-
-        if roll_dps is not None:
-            mask |= 0x01
-            roll_target = int(round(roll_dps))
-        if pitch_dps is not None:
-            mask |= 0x02
-            pitch_target = int(round(pitch_dps))
-        if yaw_dps is not None:
-            mask |= 0x04
-            yaw_target = int(round(yaw_dps))
-
-        if roll_target < -2000:
-            roll_target = -2000
-        if roll_target > 2000:
-            roll_target = 2000
-
-        if pitch_target < -2000:
-            pitch_target = -2000
-        if pitch_target > 2000:
-            pitch_target = 2000
-
-        if yaw_target < -2000:
-            yaw_target = -2000
-        if yaw_target > 2000:
-            yaw_target = 2000
-
-        payload = self._pack_request(
-            InavMSP.MSP2_INAV_FLIGHT_AXIS_RATE_OVERRIDE,
-            {
-                "overrideMask": mask,
-                "rateTargetRoll": roll_target,
-                "rateTargetPitch": pitch_target,
-                "rateTargetYaw": yaw_target,
-            },
-        )
-        self.info, rep = self._request(InavMSP.MSP2_INAV_FLIGHT_AXIS_RATE_OVERRIDE, payload)
-        return rep
 
     def get_battery_config(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         self.info, rep = self._request(InavMSP.MSP2_INAV_BATTERY_CONFIG)
@@ -765,85 +767,93 @@ class MSPApi:
             "targetHeading": rep["targetHeading"],
         }
 
-    def set_altitude_target(
-        self,
-        *,
-        altitude_datum: Union[int, "InavEnums.geoAltitudeDatumFlag_e"],
-        altitude_m: float,
-    ) -> Mapping[str, Any]:
-        payload = self._pack_request(
-            InavMSP.MSP2_INAV_SET_ALT_TARGET,
-            {
-                "altitudeDatum": int(altitude_datum),
-                "altitudeTarget": int(round(altitude_m * 100.0)),
-            },
-        )
-        self.info, rep = self._request(InavMSP.MSP2_INAV_SET_ALT_TARGET, payload)
-        return rep
+    # Conditional methods based on available MSP messages
+    # These are only defined if the corresponding message exists in msp_messages.json
 
-    def set_local_target(
-        self,
-        *,
-        x_cm: float,
-        y_cm: float,
-        z_cm: float,
-    ) -> Mapping[str, Any]:
-        payload_map = {
-            "posX": int(round(x_cm)),
-            "posY": int(round(y_cm)),
-            "posZ": int(round(z_cm)),
-        }
-        payload = self._pack_request(InavMSP.MSP2_INAV_SET_LOCAL_TARGET, payload_map)
-        self.info, rep = self._request(InavMSP.MSP2_INAV_SET_LOCAL_TARGET, payload)
-        return rep
+    if hasattr(InavMSP, 'MSP2_INAV_SET_ALT_TARGET'):
+        def set_altitude_target(
+            self,
+            *,
+            altitude_datum: Union[int, "InavEnums.geoAltitudeDatumFlag_e"],
+            altitude_m: float,
+        ) -> Mapping[str, Any]:
+            payload = self._pack_request(
+                InavMSP.MSP2_INAV_SET_ALT_TARGET,
+                {
+                    "altitudeDatum": int(altitude_datum),
+                    "altitudeTarget": int(round(altitude_m * 100.0)),
+                },
+            )
+            self.info, rep = self._request(InavMSP.MSP2_INAV_SET_ALT_TARGET, payload)
+            return rep
 
-    def get_local_target(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        self.info, rep = self._request(InavMSP.MSP2_INAV_LOCAL_TARGET)
-        return self.info, {
-            "pos": {
-                "x_cm": rep["posX"],
-                "y_cm": rep["posY"],
-                "z_cm": rep["posZ"],
-            },
-            "vel": {
-                "x_cm_s": rep["velX"] / 100.0,
-                "y_cm_s": rep["velY"] / 100.0,
-                "z_cm_s": rep["velZ"] / 100.0,
-            },
-            "yaw_deg": rep["yaw"] / 100.0,
-            "climb_rate_ms": rep["climbRate"] / 100.0,
-        }
+    if hasattr(InavMSP, 'MSP2_INAV_SET_LOCAL_TARGET'):
+        def set_local_target(
+            self,
+            *,
+            x_cm: float,
+            y_cm: float,
+            z_cm: float,
+        ) -> Mapping[str, Any]:
+            payload_map = {
+                "posX": int(round(x_cm)),
+                "posY": int(round(y_cm)),
+                "posZ": int(round(z_cm)),
+            }
+            payload = self._pack_request(InavMSP.MSP2_INAV_SET_LOCAL_TARGET, payload_map)
+            self.info, rep = self._request(InavMSP.MSP2_INAV_SET_LOCAL_TARGET, payload)
+            return rep
 
-    def set_global_target(
-        self,
-        *,
-        latitude_deg: float,
-        longitude_deg: float,
-        altitude_m: Optional[float],
-        altitude_datum: Union[int, "InavEnums.geoAltitudeDatumFlag_e"],
-    ) -> Mapping[str, Any]:
-        altitude_cm = 0 if altitude_m is None else int(round(altitude_m * 100.0))
-        payload = self._pack_request(
-            InavMSP.MSP2_INAV_SET_GLOBAL_TARGET,
-            {
-                "latitude": int(round(latitude_deg * 1e7)),
-                "longitude": int(round(longitude_deg * 1e7)),
-                "altitudeTarget": altitude_cm,
-                "altitudeDatum": int(altitude_datum),
-            },
-        )
-        self.info, rep = self._request(InavMSP.MSP2_INAV_SET_GLOBAL_TARGET, payload)
-        return rep
+    if hasattr(InavMSP, 'MSP2_INAV_LOCAL_TARGET'):
+        def get_local_target(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+            self.info, rep = self._request(InavMSP.MSP2_INAV_LOCAL_TARGET)
+            return self.info, {
+                "pos": {
+                    "x_cm": rep["posX"],
+                    "y_cm": rep["posY"],
+                    "z_cm": rep["posZ"],
+                },
+                "vel": {
+                    "x_cm_s": rep["velX"] / 100.0,
+                    "y_cm_s": rep["velY"] / 100.0,
+                    "z_cm_s": rep["velZ"] / 100.0,
+                },
+                "yaw_deg": rep["yaw"] / 100.0,
+                "climb_rate_ms": rep["climbRate"] / 100.0,
+            }
 
-    def get_nav_target(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        self.info, rep = self._request(InavMSP.MSP2_INAV_NAV_TARGET)
-        return self.info, {
-            "latitude": rep["latTarget"] / 1e7,
-            "longitude": rep["lonTarget"] / 1e7,
-            "altitude_m": rep["altitudeTarget"] / 100.0,
-            "heading_deg": rep["headingTarget"] / 1.0,
-            "climb_rate_ms": rep["climbRate"] / 100.0,
-        }
+    if hasattr(InavMSP, 'MSP2_INAV_SET_GLOBAL_TARGET'):
+        def set_global_target(
+            self,
+            *,
+            latitude_deg: float,
+            longitude_deg: float,
+            altitude_m: Optional[float],
+            altitude_datum: Union[int, "InavEnums.geoAltitudeDatumFlag_e"],
+        ) -> Mapping[str, Any]:
+            altitude_cm = 0 if altitude_m is None else int(round(altitude_m * 100.0))
+            payload = self._pack_request(
+                InavMSP.MSP2_INAV_SET_GLOBAL_TARGET,
+                {
+                    "latitude": int(round(latitude_deg * 1e7)),
+                    "longitude": int(round(longitude_deg * 1e7)),
+                    "altitudeTarget": altitude_cm,
+                    "altitudeDatum": int(altitude_datum),
+                },
+            )
+            self.info, rep = self._request(InavMSP.MSP2_INAV_SET_GLOBAL_TARGET, payload)
+            return rep
+
+    if hasattr(InavMSP, 'MSP2_INAV_NAV_TARGET'):
+        def get_nav_target(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+            self.info, rep = self._request(InavMSP.MSP2_INAV_NAV_TARGET)
+            return self.info, {
+                "latitude": rep["latTarget"] / 1e7,
+                "longitude": rep["lonTarget"] / 1e7,
+                "altitude_m": rep["altitudeTarget"] / 100.0,
+                "heading_deg": rep["headingTarget"] / 1.0,
+                "climb_rate_ms": rep["climbRate"] / 100.0,
+            }
 
     def set_heading(self, heading_deg: int) -> Mapping[str, Any]:
         payload = self._pack_request(
