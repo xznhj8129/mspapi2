@@ -5,12 +5,11 @@ Lightweight Python client and server for INAV’s MultiWii Serial Protocol (MSP)
 ## What’s here
 - `MSPApi` (mspapi2/msp_api.py): high-level helper that mirrors MSP messages with typed fields and basic unit conversion.
 - `MSPCodec` (mspapi2/mspcodec.py): packs/unpacks MSP payloads from a JSON schema.
-- `mspapi2-server`: tiny multi-client bridge that relays MSP over TCP.
 - Examples: `example_api.py` (read a bunch of MSP data and push RC/waypoint writes).
 
 ## Getting the API working
 1) Ensure you have an up-to-date MSP schema and enums list from INAV that matches your firmware. The repository includes a `syncjson.sh` helper that fetches the current INAV JSON specs.
-2) Boxes and defines are currently hardcoded snapshots (`mspapi2/lib/boxes.py`, `mspapi2/lib/inav_defines.py`).
+2) Boxes are currently hardcoded snapshots
 
 ## Install
 ```bash
@@ -21,17 +20,20 @@ pip install -e .
 
 ## Quick use
 ```python
-from mspapi2.msp_api import MSPApi
+from mspapi2 import MSPApi
 
 with MSPApi(port="/dev/ttyACM0", baudrate=115200) as api:
-    api_version = api.get_api_version()
+    version = api.get_api_version()
     status = api.get_inav_status()
-    rc_ack = api.set_rc_channels([1500, 1500, 1500, 1500])
+    api.set_rc_channels([1500, 1500, 1500, 1500])
+
+    # Request metadata available after each call
+    print(f"Latency: {api.info['latency_ms']:.1f}ms")
 ```
 - For TCP transports, pass `tcp_endpoint="host:port"` and omit `port`.
 - For UDP transports (e.g. via MSP multiplexer), pass `udp_endpoint="host:port"`; MSP v2 will be used.
 - To force MSP v2 framing on serial/TCP, set `force_msp_v2=True`.
-- Diagnostics for the last call live on `api.info` (latency, transport, attempt, timestamp).
+- Request metadata (latency, transport, attempt, timestamp) available via `api.info` after each call.
 
 ## Notes and caveats
 - The codec trusts the JSON schema; if the schema is stale, calls will misdecode. Keep `msp_messages.json` and `inav_enums.json` fresh from INAV.

@@ -97,7 +97,7 @@ from mspapi2 import MSPApi, InavMSP
 with MSPApi(port="/dev/ttyACM0") as api:
     # Make a request (it will tell you if you're missing fields)
     try:
-        info, reply = api._request(InavMSP.MSP_API_VERSION)
+        reply = api._request(InavMSP.MSP_API_VERSION)
         print("Reply contains:", reply.keys())
         print("Full reply:", reply)
     except Exception as e:
@@ -138,13 +138,14 @@ with MSPApi(port="/dev/ttyACM0") as api:
         {"waypointIndex": 0}  # From step 2
     )
 
-    info, reply = api._request(InavMSP.MSP_WP, request)
+    reply = api._request(InavMSP.MSP_WP, request)
 
     # Access reply fields (also from step 2)
     print(f"WP Number: {reply['waypointIndex']}")
     print(f"Action: {reply['action']}")
-    print(f"Lat: {reply['latitude']}")
-    print(f"Lon: {reply['longitude']}")
+    print(f"Lat: {reply['latitude'] / 1e7:.7f}")  # Scale from int to decimal degrees
+    print(f"Lon: {reply['longitude'] / 1e7:.7f}")
+    print(f"Alt: {reply['altitude'] / 100.0:.1f}m")  # Scale from cm to meters
 ```
 
 ## Understanding Field Types
@@ -214,7 +215,7 @@ with MSPApi(port="/dev/ttyACM0") as api:
     )
 
     # Send request
-    info, reply = api._request(
+    reply = api._request(
         InavMSP.MSP2_INAV_LOGIC_CONDITIONS_SINGLE,
         request
     )
@@ -251,7 +252,7 @@ Some messages don't need request data:
 request = api._pack_request(InavMSP.MSP_API_VERSION, {})
 
 # Right:
-info, reply = api._request(InavMSP.MSP_API_VERSION)
+reply = api._request(InavMSP.MSP_API_VERSION)
 ```
 
 ### "Wrong number of fields"

@@ -95,8 +95,9 @@ sudo chmod 666 /dev/ttyAMA0  # Give permissions
 from mspapi2 import MSPApi
 
 with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
-    info, version = api.get_api_version()
+    version = api.get_api_version()
     print(f"Connected! API Version: {version['apiVersionMajor']}.{version['apiVersionMinor']}")
+    print(f"Latency: {api.info['latency_ms']:.1f}ms")
 ```
 
 ## Common Use Cases
@@ -112,17 +113,18 @@ import time
 with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
     while True:
         # Read telemetry
-        _, attitude = api.get_attitude()
-        _, gps = api.get_raw_gps()
-        _, battery = api.get_inav_analog()
-        _, nav = api.get_nav_status()
+        attitude = api.get_attitude()
+        gps = api.get_raw_gps()
+        battery = api.get_inav_analog()
+        nav = api.get_nav_status()
 
         # Make decisions
-        if battery['vbat'] / 100.0 < 10.5:  # vbat is in centivolts
+        if battery['vbat'] < 10.5:  # Already in volts
             print("Low battery - trigger RTH!")
             # Set mode or waypoint for return to home
 
-        if gps['fixType'] == 0:
+        from mspapi2.lib import InavEnums
+        if gps['fixType'] == InavEnums.gpsFixType_e.GPS_NO_FIX:
             print("No GPS fix - stay in position hold")
 
         time.sleep(0.1)
@@ -141,9 +143,12 @@ with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
     api.set_waypoint(
         waypointIndex=0,
         action=InavEnums.navWaypointActions_e.NAV_WP_ACTION_WAYPOINT,
-        latitude=37.12345,    # Target latitude
-        longitude=-122.6789,  # Target longitude
+        latitude=37.12345,    # Target latitude (decimal degrees)
+        longitude=-122.6789,  # Target longitude (decimal degrees)
         altitude=50.0,        # 50 meters altitude
+        param1=0,
+        param2=0,
+        param3=0,
         flag=0
     )
 
@@ -177,6 +182,9 @@ with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
             latitude=lat,
             longitude=lon,
             altitude=20.0,  # Hover 20m above ground station
+            param1=0,
+            param2=0,
+            param3=0,
             flag=0
         )
 
@@ -209,8 +217,8 @@ with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
     while True:
         if detect_obstacle():
             # Get current position
-            _, gps = api.get_raw_gps()
-            _, attitude = api.get_attitude()
+            gps = api.get_raw_gps()
+            attitude = api.get_attitude()
 
             # Calculate safe waypoint
             new_lat, new_lon = calculate_avoidance_waypoint(
@@ -223,7 +231,10 @@ with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
                 action=InavEnums.navWaypointActions_e.NAV_WP_ACTION_WAYPOINT,
                 latitude=new_lat,
                 longitude=new_lon,
-                altitude=gps['altitude'],  # Maintain current altitude
+                altitude=gps['altitude'],  # Maintain current altitude (already in meters)
+                param1=0,
+                param2=0,
+                param3=0,
                 flag=0
             )
             print("Obstacle detected - avoiding!")
@@ -236,6 +247,7 @@ with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
 Override specific RC channels while pilot controls others:
 
 ```python
+# Option 1: Using a dict (only specify channels you want to override)
 from mspapi2 import MSPApi
 
 with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
@@ -243,9 +255,34 @@ with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
     # Flight computer controls throttle and modes
     api.set_rc_channels({
         "throttle": 1500,  # Auto-throttle
-        5: 1800,           # Activate NAV WP mode
+        5: 1800,           # Channel 5 (0-indexed) - activate NAV WP mode
     })
     # Channels not specified remain under pilot control
+
+# Option 2: Using a list (set all channels at once)
+with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
+    # Set all 18 channels: [roll, pitch, throttle, yaw, ch5, ch6, ...]
+    api.set_rc_channels([1500, 1500, 1800, 1500, 1800, 1500, 1500, 1500])
+```
+
+### 6. Checking Active Modes
+
+```python
+from mspapi2 import MSPApi
+from mspapi2.lib.boxes import BoxEnum
+
+with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
+    active_modes = api.get_active_modes()
+
+    # Each mode is a BoxEnum (IntEnum)
+    for mode in active_modes:
+        print(f"Active: {mode.name}")
+
+    # Check for specific modes
+    if BoxEnum.BOXNAVWP in active_modes:
+        print("Waypoint mode is active!")
+    if BoxEnum.BOXNAVRTH in active_modes:
+        print("Return to home is active!")
 ```
 
 ## Running as a Service
@@ -319,11 +356,14 @@ main_loop()
 ### 2. Low Latency Polling
 
 ```python
+from mspapi2 import MSPApi
+from mspapi2.lib import InavEnums
+
 with MSPApi(port="/dev/ttyAMA0", baudrate=115200) as api:
     # Fast loop for critical data
     while True:
-        _, attitude = api.get_attitude()
-        _, nav = api.get_nav_status()
+        attitude = api.get_attitude()
+        nav = api.get_nav_status()
 
         # React quickly to navigation state
         if nav['navState'] == InavEnums.navigationFSMState_t.NAV_FSM_LAND_IN_PROGRESS:
@@ -342,7 +382,7 @@ import time
 def telemetry_reader(api):
     """Fast telemetry loop"""
     while True:
-        _, attitude = api.get_attitude()
+        attitude = api.get_attitude()
         # Process telemetry
         time.sleep(0.05)
 
@@ -375,8 +415,8 @@ logging.basicConfig(
 )
 
 with MSPApi(port="/dev/ttyAMA0") as api:
-    _, gps = api.get_raw_gps()
-    logging.info(f"GPS: {gps['latitude']}, {gps['longitude']}, alt={gps['altitude']}m")
+    gps = api.get_raw_gps()
+    logging.info(f"GPS: {gps['latitude']:.7f}, {gps['longitude']:.7f}, alt={gps['altitude']:.1f}m")
 ```
 
 ## Troubleshooting
@@ -410,12 +450,12 @@ sudo reboot
 ### Connection Timeouts
 
 ```python
-# Increase timeouts for slow connections
+# Increase timeouts for slow connections (values in milliseconds)
 api = MSPApi(
     port="/dev/ttyAMA0",
     baudrate=115200,
-    read_timeout=0.5,   # Increase from default
-    write_timeout=1.0
+    read_timeout_ms=50.0,   # Increase from default 1ms
+    write_timeout_ms=50.0    # Increase from default 1ms
 )
 ```
 
