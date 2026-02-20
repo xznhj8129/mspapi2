@@ -755,6 +755,52 @@ class MSPApi:
             "flag": rep["flag"],
         }
 
+    if hasattr(InavMSP, "MSP2_INAV_NAV_ROI"):
+        def get_nav_roi(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+            self.info, rep = self._request(InavMSP.MSP2_INAV_NAV_ROI)
+            return {
+                "latitude": rep["lat"] / 1e7,
+                "longitude": rep["lon"] / 1e7,
+                "altitude": rep["alt"] / 100.0,
+                "param1": rep["p1"],
+                "param2": rep["p2"],
+                "alt_datum": InavEnums.geoAltitudeDatumFlag_e(rep["alt_datum"]),
+                "action": rep["action"],
+                "flag": rep["flag"],
+            }
+
+    if hasattr(InavMSP, "MSP2_INAV_SET_NAV_ROI"):
+        def set_nav_roi(
+            self,
+            *,
+            latitude: float,
+            longitude: float,
+            altitude: float,
+            p1: int,
+            p2: int,
+            alt_datum: int,
+            action: int,
+            flag: int,
+        ) -> Mapping[str, Any]:
+            lat_raw = int(round(latitude * 1e7))
+            lon_raw = int(round(longitude * 1e7))
+            alt_raw = int(round(altitude * 100.0))
+            payload = self._pack_request(
+                InavMSP.MSP2_INAV_SET_NAV_ROI,
+                {
+                    "lat": lat_raw,
+                    "lon": lon_raw,
+                    "alt": alt_raw,
+                    "p1": int(p1),
+                    "p2": int(p2),
+                    "alt_datum": int(alt_datum),
+                    "action": int(action),
+                    "flag": int(flag),
+                },
+            )
+            self.info, rep = self._request(InavMSP.MSP2_INAV_SET_NAV_ROI, payload)
+            return rep
+
     def get_nav_status(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         self.info, rep = self._request(InavMSP.MSP_NAV_STATUS)
         active_wp_action = rep["activeWpAction"]

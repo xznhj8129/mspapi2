@@ -1040,7 +1040,7 @@
         "FEATURE_PWM_OUTPUT_ENABLE": "1 << 28",
         "FEATURE_OSD": "1 << 29",
         "FEATURE_FW_LAUNCH": "1 << 30",
-        "FEATURE_FW_AUTOTRIM": "1 << 31"
+        "FEATURE_FW_AUTOTRIM": "1U << 31"
     },
     "filterType_e": {
         "_source": "inav/src/main/common/filter.h",
@@ -1992,7 +1992,8 @@
         "LOGIC_CONDITION_OPERAND_TYPE_GVAR": "5",
         "LOGIC_CONDITION_OPERAND_TYPE_PID": "6",
         "LOGIC_CONDITION_OPERAND_TYPE_WAYPOINTS": "7",
-        "LOGIC_CONDITION_OPERAND_TYPE_LAST": "8"
+        "LOGIC_CONDITION_OPERAND_TYPE_ROI": "8",
+        "LOGIC_CONDITION_OPERAND_TYPE_LAST": "9"
     },
     "logicOperation_e": {
         "_source": "inav/src/main/programming/logic_condition.h",
@@ -2054,6 +2055,19 @@
         "LOGIC_CONDITION_SET_GIMBAL_SENSITIVITY": "55",
         "LOGIC_CONDITION_OVERRIDE_MIN_GROUND_SPEED": "56",
         "LOGIC_CONDITION_LAST": "57"
+    },
+    "logicROIOperands_e": {
+        "_source": "inav/src/main/programming/logic_condition.h",
+        "LOGIC_CONDITION_OPERAND_ROI_ACTIVE": "0",
+        "LOGIC_CONDITION_OPERAND_ROI_DISTANCE": "1",
+        "LOGIC_CONDITION_OPERAND_ROI_GROUND_DISTANCE": "2",
+        "LOGIC_CONDITION_OPERAND_ROI_ALTITUDE": "3",
+        "LOGIC_CONDITION_OPERAND_ROI_BEARING": "4",
+        "LOGIC_CONDITION_OPERAND_ROI_ELEVATION": "5",
+        "LOGIC_CONDITION_OPERAND_ROI_PARAM1": "6",
+        "LOGIC_CONDITION_OPERAND_ROI_PARAM2": "7",
+        "LOGIC_CONDITION_OPERAND_ROI_ALT_DATUM": "8",
+        "LOGIC_CONDITION_OPERAND_ROI_ACTION": "9"
     },
     "logicWaypointOperands_e": {
         "_source": "inav/src/main/programming/logic_condition.h",
