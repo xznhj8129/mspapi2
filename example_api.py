@@ -6,6 +6,7 @@ from functools import partial
 from mspapi2.lib import InavEnums, InavMSP
 from mspapi2.msp_api import MSPApi
 from mspapi2.utils import format_nested_dict
+from mspapi2.lib.inav_version import MAJOR as INAV_VERSION_MAJOR
 import time
 from typing import Any, Dict
 
@@ -200,6 +201,49 @@ def main() -> None:
         active_modes = api.get_active_modes()
         print("Active modes:\n" + pp(active_modes))
         show_info(api.info)
+
+        if INAV_VERSION_MAJOR >= 10:
+            print()
+            local_target = api.get_local_target()
+            print("Local target (NEU offsets, cm):\n" + pp(local_target))
+            show_info(api.info)
+
+            print()
+            try:
+                ack_local = api.set_local_target(x_cm=100.0, y_cm=0.0, z_cm=0.0)
+                print("SET_LOCAL_TARGET ack:\n" + pp(ack_local))
+                show_info(api.info)
+            except Exception as exc:
+                print(f"SET_LOCAL_TARGET failed (expected if GCSNAV/offboard not active): {exc}")
+
+            print()
+            try:
+                ack_alt = api.set_altitude_target(
+                    altitude_m=30.0,
+                    #altitude_datum=InavEnums.geoAltitudeDatumFlag_e.NAV_WP_TAKEOFF_DATUM, # Takeoff by default
+                )
+                print("SET_ALT_TARGET ack:\n" + pp(ack_alt))
+                show_info(api.info)
+            except Exception as exc:
+                print(f"SET_ALT_TARGET failed (expected if GCSNAV/offboard not active): {exc}")
+
+            print()
+            nav_target = api.get_nav_target()
+            print("NAV target (global):\n" + pp(nav_target))
+            show_info(api.info)
+
+            print()
+            try:
+                ack_global = api.set_global_target(
+                    latitude_deg=raw_gps["latitude"],
+                    longitude_deg=raw_gps["longitude"],
+                    altitude_m=None,  # keep current altitude
+                    #altitude_datum=InavEnums.geoAltitudeDatumFlag_e.NAV_WP_TAKEOFF_DATUM, # Takeoff by default
+                )
+                print("SET_GLOBAL_TARGET ack:\n" + pp(ack_global))
+                show_info(api.info)
+            except Exception as exc:
+                print(f"SET_GLOBAL_TARGET failed (expected if GCSNAV/offboard not active): {exc}")
 
         """Result:
         MSP API version:
@@ -438,39 +482,6 @@ def main() -> None:
         Active modes:
             0: <BoxEnum.BOXFAILSAFE: 27>
         latency=10.21ms, attempt=1, transport=serial"""
-
-        #part of branch, not implemented yet
-        """print()
-        local_target = api.get_local_target()
-        print("Local target (NEU offsets, cm):\n" + pp(local_target))
-        show_info(api.info)
-
-        print()
-        try:
-            ack_local = api.set_local_target(x_cm=100.0, y_cm=0.0, z_cm=0.0)
-            print("SET_LOCAL_TARGET ack:\n" + pp(ack_local))
-            show_info(api.info)
-        except Exception as exc:
-            print(f"SET_LOCAL_TARGET failed (expected if GCSNAV/offboard not active): {exc}")
-
-        print()
-        nav_target = api.get_nav_target()
-        print("NAV target (global):\n" + pp(nav_target))
-        show_info(api.info)
-
-        print()
-        try:
-            ack_global = api.set_global_target(
-                latitude_deg=raw_gps["latitude"],
-                longitude_deg=raw_gps["longitude"],
-                altitude_m=None,  # keep current altitude
-                altitude_datum=InavEnums.geoAltitudeDatumFlag_e.NAV_WP_TAKEOFF_DATUM,
-            )
-            print("SET_GLOBAL_TARGET ack:\n" + pp(ack_global))
-            show_info(api.info)
-        except Exception as exc:
-            print(f"SET_GLOBAL_TARGET failed (expected if GCSNAV/offboard not active): {exc}")
-        """
 
         """print()
         _, simulator_reply = api.set_simulator(

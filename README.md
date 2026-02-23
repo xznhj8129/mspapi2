@@ -7,11 +7,13 @@ Lightweight Python client and server for INAV’s MultiWii Serial Protocol (MSP)
 - `MSPCodec` (mspapi2/mspcodec.py): packs/unpacks MSP payloads from a JSON schema.
 - Examples: `example_api.py` (read a bunch of MSP data and push RC/waypoint writes).
 
-## Getting the API working
-1) Ensure you have an up-to-date MSP schema and enums list from INAV that matches your firmware. The repository includes a `syncjson.sh` helper that fetches the current INAV JSON specs.
-2) Boxes are currently hardcoded snapshots
+## Setup
+1. You must use the imports from the version of INAV that you want to use. If you use 9.0's API with 8.0, there will be errors. Pull the correct version using
+```
+./syncjson.sh --branch 9.0.1
+```
 
-## Install
+2. Install module
 ```bash
 python -m venv .venv
 . .venv/bin/activate
