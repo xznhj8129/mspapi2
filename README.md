@@ -41,3 +41,8 @@ with MSPApi(port="/dev/ttyACM0", baudrate=115200) as api:
 - The codec trusts the JSON schema; if the schema is stale, calls will misdecode. Keep `msp_messages.json` and `inav_enums.json` fresh from INAV.
 - Mode boxes and INAV defines are static snapshots; automatic updates are WIP
 - Exceptions are allowed to surface; crashes are preferable to silently masking protocol drift.
+
+## Examples
+MSP gamepad/tx12 as MSP_RC joystick: 
+    python examples/msp_joystick.py --tcp 127.0.0.1:5762 --rate 50 --joystick-index 0
+    python examples/msp_joystick.py --port /dev/ttyACM0 --baudrate 115200 --rate 50 --joystick-index 0
