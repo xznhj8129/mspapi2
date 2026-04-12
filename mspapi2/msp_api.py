@@ -443,7 +443,11 @@ class MSPApi:
 
     def get_attitude(self) -> Tuple[Dict[str, Any], Dict[str, float]]:
         self.info, rep = self._request(InavMSP.MSP_ATTITUDE)
-        return {axis: rep[axis] / 10.0 for axis in ("roll", "pitch", "yaw")}
+        return {
+            "roll": rep["roll"] / 10.0,
+            "pitch": rep["pitch"] / 10.0,
+            "yaw": float(rep["yaw"]),
+        }
 
     def get_altitude(self) -> Tuple[Dict[str, Any], Dict[str, float]]:
         self.info, rep = self._request(InavMSP.MSP_ALTITUDE)
