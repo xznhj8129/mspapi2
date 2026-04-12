@@ -18,14 +18,30 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -h|--help)
-            echo "Usage: $0 [--local] [--branch <name>]"
-            echo "  --local           Copy files from ${LOCAL_INAV_DIR}/docs/development/msp"
-            echo "  --branch <name>   Remote INAV branch or tag to fetch from (default: ${DEFAULT_BRANCH})"
+            cat <<EOF
+Usage:
+  $0 [--local]
+  $0 [--branch <name>]
+
+What it does:
+  Copies msp_messages.json and inav_enums.json into mspapi2/lib/
+  and regenerates mspapi2/lib/inav_version.py from INAV's CMakeLists.txt.
+
+Options:
+  --local           Read files from ${LOCAL_INAV_DIR}/docs/development/msp
+  --branch <name>   Read files from a remote INAV branch or tag
+                    Default: ${DEFAULT_BRANCH}
+
+Examples:
+  $0
+  $0 --branch maintenance-10.x
+  $0 --local
+EOF
             exit 0
             ;;
         *)
             echo "Unknown option: $1" >&2
-            echo "Usage: $0 [--local] [--branch <name>]" >&2
+            echo "Run '$0 --help' for usage." >&2
             exit 1
             ;;
     esac
@@ -75,4 +91,6 @@ MINOR = ${minor}
 PATCH = ${patch}
 PY
 
-echo "${source_desc} files=msp_messages.json,inav_enums.json,inav_version.py inavVersion=${major}.${minor}.${patch}"
+echo "Updated mspapi2/lib/msp_messages.json, mspapi2/lib/inav_enums.json, and mspapi2/lib/inav_version.py"
+echo "${source_desc}"
+echo "INAV version: ${major}.${minor}.${patch}"

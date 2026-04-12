@@ -8,9 +8,14 @@ Lightweight Python client and server for INAV’s MultiWii Serial Protocol (MSP)
 - Examples: `example_api.py` (read a bunch of MSP data and push RC/waypoint writes).
 
 ## Setup
-1. You must use the imports from the version of INAV that you want to use. If you use 9.0's API with 8.0, there will be errors. Pull the correct version using
+1. Use the INAV schema files that match the firmware you want to talk to. If the JSON files are from the wrong INAV release, message decoding will be wrong. Refresh them with:
 ```
 ./syncjson.sh --branch 9.0.1
+```
+
+To pull from your local INAV checkout instead of GitHub:
+```bash
+./syncjson.sh --local
 ```
 
 2. Install module
