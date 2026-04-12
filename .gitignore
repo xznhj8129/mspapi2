@@ -210,3 +210,4 @@ inav_*_SITL
 sitldiff.txt
 out.log
 mspmplex
+*.log
