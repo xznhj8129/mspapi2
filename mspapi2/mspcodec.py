@@ -28,6 +28,10 @@ bin_type_map = {
     "boxBitmask_t": "Q",
 }
 
+class MSPUnpackError(ValueError):
+    pass
+
+
 
 def _load_multiwii_enum(schema_path: Path) -> type[enum.IntEnum]:
     try:
@@ -36,22 +40,38 @@ def _load_multiwii_enum(schema_path: Path) -> type[enum.IntEnum]:
     except FileNotFoundError as exc:
         raise RuntimeError(f"InavMSP schema not found: {schema_path}") from exc
 
+    if "version" in data.keys():
+        specv = data["version"]
+        messages = data["messages"]
+    else:
+        messages = data
+
+    """"build": {
+        "fc_version": {
+            "major": 10,
+            "minor": 0,
+            "patch": 0
+        }
+    },"""
+
     members: Dict[str, int] = {}
     codes_seen: Dict[int, str] = {}
-    for name, node in data.items():
+    for name, node in messages.items():
+
         if not isinstance(name, str) or not name.isidentifier():
             raise RuntimeError(f"Invalid MSP message name in schema: {name!r}")
         if not isinstance(node, Mapping):
             raise RuntimeError(f"Invalid MSP schema node for {name}: expected mapping")
+
         code_raw = node.get("code")
         try:
             code = int(code_raw)
         except (TypeError, ValueError) as exc:
-            raise RuntimeError(f"Invalid code for {name}: {code_raw!r}") from exc
+            raise RuntimeError(f"Invalid code for {name}: {code_raw!r} in {schema_path}") from exc
         if name in members:
-            raise RuntimeError(f"Duplicate MSP message name in schema: {name}")
+            raise RuntimeError(f"Duplicate MSP message name in schema: {name}in {schema_path}")
         if code in codes_seen:
-            raise RuntimeError(f"Duplicate MSP code {code} shared by {codes_seen[code]} and {name}")
+            raise RuntimeError(f"Duplicate MSP code {code} shared by {codes_seen[code]} and {name} in {schema_path}")
         members[name] = code
         codes_seen[code] = name
 
@@ -105,11 +125,11 @@ class MSPCodec:
     def from_json_file(cls, path: str) -> "MSPCodec":
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return cls(cls._parse_schema(data))
+        return cls(cls._parse_schema(data['messages']))
 
     @classmethod
     def from_json_obj(cls, obj: Mapping[str, Any]) -> "MSPCodec":
-        return cls(cls._parse_schema(obj))
+        return cls(cls._parse_schema(obj['messages']))
 
     @staticmethod
     def _normalize_fmt(fmt: Optional[str]) -> Optional[str]:
@@ -412,12 +432,12 @@ class MSPCodec:
 
         expected_size = side.size
         if expected_size is not None and len(payload) != expected_size:
-            raise ValueError(f"{spec.name}: reply size {len(payload)} != expected {expected_size}")
+            raise MSPUnpackError(f"{spec.name}: reply size {len(payload)} != expected {expected_size}")
 
         try:
             values = struct.unpack(fmt, payload)
         except struct.error as e:
-            raise ValueError(f"{spec.name}: unpack_reply error: {e}")
+            raise MSPUnpackError(f"{spec.name}: unpack_reply error: {e}")
         return self._map_struct_values(spec.name, side, values)
 
     # why
@@ -426,11 +446,11 @@ class MSPCodec:
         fmt = spec.request.struct_fmt
         if fmt is None:
             if payload not in (b"",):
-                raise ValueError(f"{spec.name}: request expected empty payload, got {len(payload)} bytes")
+                raise MSPUnpackError(f"{spec.name}: request expected empty payload, got {len(payload)} bytes")
             return {}
         size = struct.calcsize(fmt)
         if len(payload) != size:
-            raise ValueError(f"{spec.name}: request size {len(payload)} != expected {size}")
+            raise MSPUnpackError(f"{spec.name}: request size {len(payload)} != expected {size}")
         values = struct.unpack(fmt, payload)
         return self._map_struct_values(spec.name, spec.request, values)
 
@@ -439,13 +459,13 @@ class MSPCodec:
         fmt = spec.reply.struct_fmt
         if fmt is None:
             if values not in ((), [], {}):
-                raise ValueError(f"{spec.name}: reply has no payload")
+                raise MSPUnpackError(f"{spec.name}: reply has no payload")
             return b""
         ordered = self._flatten_struct_values(spec.name, spec.reply, values)
         try:
             return struct.pack(fmt, *ordered)
         except struct.error as e:
-            raise ValueError(f"{spec.name}: pack_reply error: {e}")
+            raise MSPUnpackError(f"{spec.name}: pack_reply error: {e}")
 
     @staticmethod
     def _decode_variable_payload(message_name: str, side: _PayloadSide, payload: bytes) -> Dict[str, Any]:

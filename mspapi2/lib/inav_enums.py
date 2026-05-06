@@ -40,7 +40,7 @@ class InavEnums:
 
 _skipped_enum_members = {}
 
-for enum_name, entries in json.loads(ENUMS_JSON_PATH.read_text()).items():
+for enum_name, entries in json.loads(ENUMS_JSON_PATH.read_text())['enums'].items():
     scope = dict(_base_scope)
     resolved = {}
     skipped = []

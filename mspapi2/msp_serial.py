@@ -462,6 +462,7 @@ class MSPSerial:
                 try:
                     getattr(self._ser, method)()
                 except (OSError, serial.SerialException):
+                    # Best-effort cleanup only; open proceeds and request/read paths surface real transport failures.
                     pass
 
         # Start reader thread
@@ -483,6 +484,7 @@ class MSPSerial:
                 if self._use_udp:
                     self._udp_active = False
             except (OSError, serial.SerialException):
+                # Close during teardown is non-fatal; caller may already be handling the primary exception.
                 pass
             finally:
                 self._ser = None
@@ -601,6 +603,7 @@ class MSPSerial:
                     if attempt >= self._max_retries or not self._retry_connection(attempt):
                         break
                 except Exception as exc:
+                    # Preserve the original unexpected error and re-raise after loop via `last_error`.
                     last_error = exc
                     break
 
@@ -635,6 +638,7 @@ class MSPSerial:
                     self._record_reader_error()
                     break
                 except Exception as exc:
+                    # Unexpected parser/dispatch failure is recorded; `_ensure_reader_ok()` will raise on next request.
                     self._record_reader_error(exc)
                     break
         finally:
@@ -662,6 +666,7 @@ class MSPSerial:
             try:
                 self.on_message(msg)
             except Exception:
+                # Callback failures are intentionally isolated from transport; details are only in msp.log `ERR`.
                 self._log_io("ERR", f"on_message exception for code {msg.code}".encode("ascii"))
 
     def _get_queue_for_code(self, code: int) -> Queue:
@@ -690,6 +695,7 @@ class MSPSerial:
         try:
             self.close()
         except Exception:
+            # Retry path should not mask the original request failure; close errors are intentionally ignored here.
             pass
         time.sleep(self._reconnect_delay * attempt)
         try:
@@ -697,6 +703,7 @@ class MSPSerial:
             self._reconnects += 1
             return True
         except Exception:
+            # Keep retry helper side-effect free: caller decides how to propagate/fail after reconnect attempt.
             return False
 
     def _request_core(

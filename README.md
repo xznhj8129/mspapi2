@@ -12,6 +12,7 @@ Lightweight Python client and server for INAV’s MultiWii Serial Protocol (MSP)
 ```
 ./syncjson.sh --branch 9.0.1
 ```
+**Important**: The JSON files must have been generated with the build. If you are on a branch that has had changes but they weren't updated, there will be errors. See inav/docs/development/msp, the gendocs.sh script.
 
 To pull from your local INAV checkout instead of GitHub:
 ```bash
