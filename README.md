@@ -33,6 +33,7 @@ from mspapi2 import MSPApi
 with MSPApi(port="/dev/ttyACM0", baudrate=115200) as api:
     version = api.get_api_version()
     status = api.get_inav_status()
+    boot_time_ns = api.get_timesync_ns()
     api.set_rc_channels([1500, 1500, 1500, 1500])
 
     # Request metadata available after each call
@@ -42,6 +43,7 @@ with MSPApi(port="/dev/ttyACM0", baudrate=115200) as api:
 - For UDP transports (e.g. via MSP multiplexer), pass `udp_endpoint="host:port"`; MSP v2 will be used.
 - To force MSP v2 framing on serial/TCP, set `force_msp_v2=True`.
 - Request metadata (latency, transport, attempt, timestamp) available via `api.info` after each call.
+- Command helpers `set_armed()`, `activate_rth()`, and `activate_landing()` expose the corresponding MSPv2 flight commands. `activate_landing()` performs a normal landing at the current position, not an emergency landing.
 
 ## Notes and caveats
 - The codec trusts the JSON schema; if the schema is stale, calls will misdecode. Keep `msp_messages.json` and `inav_enums.json` fresh from INAV.

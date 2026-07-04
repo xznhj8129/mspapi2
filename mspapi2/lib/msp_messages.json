@@ -1,7 +1,7 @@
 {
     "version": {
         "major": 2,
-        "minor": 0,
+        "minor": 1,
         "patch": 0
     },
     "messages": {
@@ -4920,9 +4920,9 @@
                     },
                     {
                         "name": "hwVersion",
-                        "ctype": "uint32_t",
-                        "desc": "GPS hardware version (`gpsState.hwVersion`). Values: 500=UBLOX5, 600=UBLOX6, 700=UBLOX7, 800=UBLOX8, 900=UBLOX9, 1000=UBLOX10, 0=UNKNOWN",
-                        "units": "Version code"
+                        "ctype": "uint8_t",
+                        "desc": "GPS hardware version bit-field: bits[7:6]=series (0b01=u-blox Neo/M), bits[5:0]=generation. E.g. 0x48=M8, 0x49=M9, 0x4A=M10, 0=unknown.",
+                        "units": ""
                     }
                 ]
             },
@@ -9817,6 +9817,100 @@
             "notes": "Requires `USE_ESC_SENSOR`. See `escSensorData_t` in `sensors/esc_sensor.h` for the exact structure fields.",
             "description": "Retrieves the full telemetry data structure reported by each ESC."
         },
+        "MSP2_INAV_DRONECAN_NODES": {
+            "code": 8258,
+            "mspv": 2,
+            "request": null,
+            "reply": {
+                "payload": [
+                    {
+                        "name": "nodeCount",
+                        "ctype": "uint8_t",
+                        "desc": "Number of detected DroneCAN nodes",
+                        "units": ""
+                    },
+                    {
+                        "name": "nodeData",
+                        "desc": "Array of per-node status records, one per detected node. Each record: nodeID(1)+health(1)+mode(1)+last_seen_ms(4) = 7 bytes. Full detail available via MSP2_INAV_DRONECAN_NODE_INFO.",
+                        "ctype": "dronecanNodeStatus_t",
+                        "array": true,
+                        "array_size": 0,
+                        "units": ""
+                    }
+                ]
+            },
+            "variable_len": true,
+            "notes": "Requires `USE_DRONECAN`. Response is `nodeCount` followed by `nodeCount` records of 7 bytes each: nodeID(1)+health(1)+mode(1)+last_seen_ms(4). Maximum payload 1 + (DRONECAN_MAX_NODES * 7) = 225 bytes. Full node detail including uptime, vendor status, and name is available via MSP2_INAV_DRONECAN_NODE_INFO.",
+            "description": "Returns the list of all detected DroneCAN nodes with their current status."
+        },                                                                                                        
+        "MSP2_INAV_DRONECAN_NODE_INFO": {                                                   
+            "code": 8259,                                                                                         
+            "mspv": 2,                                                                                            
+            "request": {
+                "payload": [                                                                                      
+                    {                                                                       
+                        "name": "nodeID",
+                        "ctype": "uint8_t",
+                        "desc": "DroneCAN node ID to query (1-127)",
+                        "units": ""                                                                               
+                    }
+                ]                                                                                                 
+            },                                                                              
+            "reply": {
+                "payload": [
+                    {
+                        "name": "nodeID",
+                        "ctype": "uint8_t",                                                                       
+                        "desc": "DroneCAN node ID",
+                        "units": ""                                                                               
+                    },                                                                      
+                    {
+                        "name": "health",
+                        "ctype": "uint8_t",
+                        "desc": "Node health: 0=OK, 1=WARNING, 2=ERROR, 3=CRITICAL",
+                        "units": ""
+                    },
+                    {
+                        "name": "mode",
+                        "ctype": "uint8_t",                                                                       
+                        "desc": "Node mode: 0=OPERATIONAL, 1=INITIALIZATION, 2=MAINTENANCE, 3=SOFTWARE_UPDATE, 7=OFFLINE",                                                                                                       
+                        "units": ""                                                         
+                    },                                                                                            
+                    {
+                        "name": "uptime_sec",                                                                     
+                        "ctype": "uint32_t",                                                
+                        "desc": "Node uptime in seconds",
+                        "units": "s"
+                    },
+                    {
+                        "name": "vendor_status_code",                                                             
+                        "ctype": "uint16_t",
+                        "desc": "Vendor-specific status code",                                                    
+                        "units": ""                                                         
+                    },
+                    {
+                        "name": "last_seen_ms",
+                        "ctype": "uint32_t",                                                                      
+                        "desc": "FC millisecond timestamp when this node was last seen",
+                        "units": "ms"                                                                             
+                    },                                                                      
+                    {
+                        "name": "name_len",
+                        "ctype": "uint8_t",                                                                       
+                        "desc": "Length of node name string (0 if unknown)",
+                        "units": ""                                                                               
+                    },                                                                      
+                    {
+                        "name": "name",
+                        "ctype": "char[32]",
+                        "desc": "Node name up to 32 bytes, zero-padded",                                          
+                        "units": ""
+                    }                                                                                             
+                ]                                                                           
+            },
+            "notes": "Requires `USE_DRONECAN`. Returns `MSP_RESULT_ERROR` if the requested node ID is not in the node table.",                                                                                                     
+            "description": "Returns full status detail for a single DroneCAN node by ID."
+        },                                        
         "MSP2_INAV_LED_STRIP_CONFIG_EX": {
             "code": 8264,
             "mspv": 2,
@@ -10481,6 +10575,35 @@
             "reply": null,
             "notes": "Payload length must be (OSD_CUSTOM_ELEMENT_TEXT_SIZE - 1) + (CUSTOM_ELEMENTS_PARTS * 3) + 4 bytes including elementIndex. elementIndex must be < MAX_CUSTOM_ELEMENTS. Each partType must be < CUSTOM_ELEMENT_TYPE_END. Firmware NUL-terminates elementText internally.",
             "description": "Sets the configuration of one custom OSD element."
+        },
+        "MSP2_INAV_GET_LINK_STATS": {
+            "code": 8451,
+            "mspv": 2,
+            "request": null,
+            "reply": {
+                "payload": [
+                    {
+                        "name": "uplinkRSSI_dBm",
+                        "ctype": "uint8_t",
+                        "desc": "Uplink RSSI in dBm, sent as a positive magnitude (`getRSSI()`). For example, 70 means -70dBm.",
+                        "units": "-dBm"
+                    },
+                    {
+                        "name": "uplinkLQ",
+                        "ctype": "uint8_t",
+                        "desc": "Uplink Link Quality (`rxLinkStatistics.uplinkLQ`)",
+                        "units": "%"
+                    },
+                    {
+                        "name": "uplinkSNR",
+                        "ctype": "int8_t",
+                        "desc": "Uplink Signal-to-Noise Ratio (`rxLinkStatistics.uplinkSNR`)",
+                        "units": "dB"
+                    }
+                ]
+            },
+            "notes": "Useful for GCS monitoring of the active RC link quality and signal margin.",
+            "description": "Provides uplink RC link statistics for monitoring on a GCS."
         },
         "MSP2_INAV_OUTPUT_MAPPING_EXT2": {
             "code": 8461,
@@ -11213,6 +11336,116 @@
             },
             "notes": "All attitude angles are in deci-degrees.",
             "description": "Provides estimates of current attitude, local NEU position, and velocity."
+        },
+        "MSP2_INAV_SET_WP_INDEX": {
+            "code": 8737,
+            "mspv": 2,
+            "request": {
+                "payload": [
+                    {
+                        "name": "wp_index",
+                        "ctype": "uint8_t",
+                        "desc": "0-based waypoint index to jump to, relative to the mission start waypoint (`posControl.startWpIndex`)",
+                        "units": "-"
+                    }
+                ]
+            },
+            "reply": null,
+            "notes": "Returns error if the aircraft is not armed, `NAV_WP_MODE` is not active, or the index is outside the valid mission range (`startWpIndex` to `startWpIndex + waypointCount - 1`). On success, sets `posControl.activeWaypointIndex` to the requested index and fires `NAV_FSM_EVENT_SWITCH_TO_WAYPOINT_JUMP`, transitioning the navigation FSM back to `NAV_STATE_WAYPOINT_PRE_ACTION` so the flight controller re-initialises navigation for the new target.",
+            "description": "Jumps to a specific waypoint during an active waypoint mission, causing the aircraft to immediately begin navigating toward the new target waypoint."
+        },
+        "MSP2_INAV_SET_CRUISE_HEADING": {
+            "code": 8739,
+            "mspv": 2,
+            "request": {
+                "payload": [
+                    {
+                        "name": "heading_centidegrees",
+                        "ctype": "int32_t",
+                        "desc": "Target heading in centidegrees (0-35999). Values are wrapped modulo 36000 before being applied.",
+                        "units": "centidegrees"
+                    }
+                ]
+            },
+            "reply": null,
+            "notes": "Returns error if the aircraft is not armed or `NAV_COURSE_HOLD_MODE` is not active. On success, sets both `posControl.cruise.course` and `posControl.cruise.previousCourse` to the normalised value, preventing spurious heading adjustments from `getCruiseHeadingAdjustment()` on the next control cycle.",
+            "description": "Sets the course heading target while Cruise or Course Hold mode is active, causing the aircraft to turn to and maintain the new heading."
+        },
+        "MSP2_INAV_ACTIVATE_LANDING": {
+            "code": 8740,
+            "mspv": 2,
+            "request": null,
+            "reply": null,
+            "notes": "Requires the aircraft to be armed with usable position, altitude, and heading estimates. Creates a transient LAND waypoint at the current position without changing the uploaded mission, then enters the normal `NAV_STATE_WAYPOINT_RTH_LAND` path. This is not emergency landing.",
+            "description": "Commands an immediate normal landing at the current position."
+        },
+        "MSP2_INAV_ACTIVATE_RTH": {
+            "code": 8741,
+            "mspv": 2,
+            "request": null,
+            "reply": null,
+            "notes": "Requires the aircraft to be armed. Uses `activateForcedRTH()` and returns an error unless the forced-RTH state leaves `RTH_IDLE`.",
+            "description": "Commands the aircraft to execute its configured return-to-home sequence."
+        },
+        "MSP2_INAV_ARM_DISARM": {
+            "code": 8743,
+            "mspv": 2,
+            "request": {
+                "payload": [
+                    {
+                        "name": "arm",
+                        "ctype": "uint8_t",
+                        "desc": "Requested armed state: 0 disarms, 1 arms through the normal arming checks.",
+                        "units": "Boolean"
+                    }
+                ]
+            },
+            "reply": null,
+            "notes": "Returns an error for values other than 0 or 1, or when the requested armed state is not reached.",
+            "description": "Arms or disarms the flight controller using the normal FC arming path."
+        },
+        "MSP2_INAV_TIMESYNC": {
+            "code": 8744,
+            "mspv": 2,
+            "request": null,
+            "reply": {
+                "payload": [
+                    {
+                        "name": "timeNs",
+                        "ctype": "uint64_t",
+                        "desc": "Monotonic flight-controller boot time, calculated as `(uint64_t)micros() * 1000`.",
+                        "units": "ns"
+                    }
+                ]
+            },
+            "notes": "The value is little-endian like other MSP integer fields and uses the same boot-time clock returned by MAVLink `TIMESYNC`.",
+            "description": "Returns the local monotonic boot time in nanoseconds."
+        },
+        "MSP2_INAV_SET_AUX_RC": {
+            "code": 8752,
+            "mspv": 2,
+            "request": {
+                "payload": [
+                    {
+                        "name": "definitionByte",
+                        "ctype": "uint8_t",
+                        "desc": "Packed start channel and resolution. Bits 7-3: start channel index (valid range 12-31 for CH13-CH32; 0-11 rejected as error). Bits 2-0: resolution mode (0=2-bit, 1=4-bit, 2=8-bit, 3=16-bit; 4-7 reserved/error).",
+                        "units": ""
+                    },
+                    {
+                        "name": "channelData",
+                        "ctype": "uint8_t",
+                        "desc": "Packed channel values, sequential from start channel. Number of channels is derived from data size and resolution. Value 0 means skip (no update). Sub-byte modes (2-bit, 4-bit) are packed MSB-first. 2-bit values 1-3 map to 1000/1500/2000us. 4-bit values 1-15 map to 1000 + (val-1)*1000/14 us. 8-bit values 1-255 map to 1000 + (val-1)*1000/254 us. 16-bit values are direct PWM, clamped to 750-2250us.",
+                        "units": "PWM (encoded)",
+                        "array": true,
+                        "array_size": 0
+                    }
+                ]
+            },
+            "reply": null,
+            "variable_len": true,
+            "notes": "CH1-CH12 (index 0-11) are protected and will return `MSP_RESULT_ERROR`. Payload size must be 2-49 bytes. Constraint: `startChannel + channelCount <= 32`. Values persist until overwritten; no timeout. Applied as a post-RX overlay in `calculateRxChannelsAndUpdateFailsafe()` after MSP RC Override but before failsafe. Does not require `USE_RX_MSP` or MSP-RC-OVERRIDE flight mode. Does not affect failsafe detection. When MSP is the primary RX provider, channels covered by `MSP_SET_RAW_RC` are automatically skipped. Channels in the `mspOverrideChannels` bitmask are skipped when MSP RC Override mode is active. Recommended to send with `MSP_FLAG_DONT_REPLY` (flags=0x01) to save bandwidth on telemetry passthrough links. 16-bit mode requires even number of data bytes and values are clamped to 750-2250us.",
+            "description": "Bandwidth-efficient auxiliary RC channel update. Sets CH13-CH32 with configurable resolution (2/4/8/16-bit) without affecting primary flight controls. Designed for extending channel count beyond native RC link capacity via MSP passthrough."
         },
         "MSP2_BETAFLIGHT_BIND": {
             "code": 12288,

@@ -653,6 +653,23 @@ class MSPApi:
             "targetHeading": rep["targetHeading"],
         }
 
+    def set_armed(self, arm: bool) -> Mapping[str, Any]:
+        payload = self._pack_request(InavMSP.MSP2_INAV_ARM_DISARM, {"arm": int(arm)})
+        self.info, rep = self._request(InavMSP.MSP2_INAV_ARM_DISARM, payload)
+        return rep
+
+    def activate_rth(self) -> Mapping[str, Any]:
+        self.info, rep = self._request(InavMSP.MSP2_INAV_ACTIVATE_RTH)
+        return rep
+
+    def activate_landing(self) -> Mapping[str, Any]:
+        self.info, rep = self._request(InavMSP.MSP2_INAV_ACTIVATE_LANDING)
+        return rep
+
+    def get_timesync_ns(self) -> int:
+        self.info, rep = self._request(InavMSP.MSP2_INAV_TIMESYNC)
+        return rep["timeNs"]
+
 
     def set_heading(self, heading_deg: int) -> Mapping[str, Any]:
         payload = self._pack_request(
