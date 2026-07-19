@@ -28,6 +28,10 @@ bin_type_map = {
     "boxBitmask_t": "Q",
 }
 
+compound_type_map = {
+    "dronecanNodeStatus_t": "BBBI",
+}
+
 class MSPUnpackError(ValueError):
     pass
 
@@ -408,12 +412,40 @@ class MSPCodec:
 
     def pack_request(self, code: InavMSP, values: Union[Iterable[Any], Mapping[str, Any]] = ()) -> bytes:
         spec = self._get_spec(code)
-        fmt = spec.request.struct_fmt
+        side = spec.request
+        if isinstance(values, Mapping):
+            while side.fields and side.fields[-1].get("optional") \
+                    and side.field_names[-1] not in values:
+                side = self._payload_side_from_dict({"payload": side.fields[:-1]})
+        fmt = side.struct_fmt
         if fmt is None:
-            if values not in ((), [], {}):
-                raise ValueError(f"{spec.name}: request has no payload")
-            return b""
-        ordered = self._flatten_struct_values(spec.name, spec.request, values)
+            if not side.fields:
+                if values not in ((), [], {}):
+                    raise ValueError(f"{spec.name}: request has no payload")
+                return b""
+
+            if isinstance(values, Mapping):
+                data = values
+            else:
+                ordered_values = self._values_in_order(values, side.field_names)
+                data = dict(zip(side.field_names, ordered_values))
+
+            payload = bytearray()
+            for name, field in zip(side.field_names, side.fields):
+                value = data[name]
+                if self._field_is_array(field):
+                    base = self._field_array_base(field)
+                    if base == "char":
+                        payload.extend(value.encode("latin1") if isinstance(value, str) else bytes(value))
+                    else:
+                        items = list(value)
+                        payload.extend(struct.pack("<" + bin_type_map[base] * len(items), *items))
+                else:
+                    field_fmt = self._normalize_fmt(self._struct_code_for_field(field))
+                    payload.extend(struct.pack(field_fmt, value))
+            return bytes(payload)
+
+        ordered = self._flatten_struct_values(spec.name, side, values)
         try:
             return struct.pack(fmt, *ordered)
         except struct.error as e:
@@ -431,6 +463,11 @@ class MSPCodec:
             return self._decode_variable_payload(spec.name, side, payload)
 
         expected_size = side.size
+        while expected_size is not None and len(payload) < expected_size \
+                and side.fields and side.fields[-1].get("optional"):
+            side = self._payload_side_from_dict({"payload": side.fields[:-1]})
+            fmt = side.struct_fmt
+            expected_size = side.size
         if expected_size is not None and len(payload) != expected_size:
             raise MSPUnpackError(f"{spec.name}: reply size {len(payload)} != expected {expected_size}")
 
@@ -546,6 +583,10 @@ class MSPCodec:
 
         is_array = bool(field.get("array")) or "[]" in str(field.get("ctype", ""))
 
+        if offset == total_len and is_array and MSPCodec._resolve_dynamic_length(field, parsed) == 0:
+            base_ctype = field.get("array_ctype") or field.get("ctype", "")
+            return name, b"" if base_ctype.replace("[]", "").strip() == "char" else [], offset
+
         if offset == total_len:
             raise ValueError(f"{message_name}: field '{name}' offset {offset} exceeds payload size {total_len}")
 
@@ -558,7 +599,7 @@ class MSPCodec:
                 elem_size = 1
                 base_code = None
             else:
-                base_code = bin_type_map.get(base_ctype)
+                base_code = bin_type_map.get(base_ctype) or compound_type_map.get(base_ctype)
                 if not base_code:
                     raise ValueError(f"{message_name}: unsupported array base type '{base_ctype}' for field '{name}'")
                 elem_size = struct.calcsize("<" + base_code)

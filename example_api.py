@@ -1,3 +1,8 @@
+"""
+Usage:
+    python example_api.py --tcp 127.0.0.1:5760
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -5,6 +10,7 @@ from functools import partial
 
 from mspapi2.lib import InavEnums, InavMSP
 from mspapi2.msp_api import MSPApi
+from mspapi2.msp_serial import MSPUnsupportedError
 from mspapi2.utils import format_nested_dict
 from mspapi2.lib.inav_version import MAJOR as INAV_VERSION_MAJOR
 import time
@@ -98,6 +104,33 @@ def main() -> None:
         show_info(api.info)
 
         print()
+        link_stats = api.get_link_stats()
+        print("Link stats:\n" + pp(link_stats))
+        show_info(api.info)
+
+        try:
+            print()
+            dronecan_nodes = api.get_dronecan_nodes()
+            print("DroneCAN nodes:\n" + pp(dronecan_nodes))
+            show_info(api.info)
+            for dronecan_node in dronecan_nodes:
+                node_info = api.get_dronecan_node_info(dronecan_node["nodeID"])
+                print(f"DroneCAN node {dronecan_node['nodeID']} info:\n" + pp(node_info))
+                show_info(api.info)
+        except MSPUnsupportedError as exc:
+            print(f"DroneCAN node queries unavailable in this firmware build: {exc}")
+
+        print()
+        boot_time_ns = api.get_timesync_ns()
+        print(f"FC boot time: {boot_time_ns}ns")
+        show_info(api.info)
+
+        print()
+        disarm_ack = api.set_armed(False)
+        print("ARM_DISARM disarm ack:\n" + pp(disarm_ack))
+        show_info(api.info)
+
+        print()
         logic_condition = api.get_logic_condition(0)
         print("Logic condition[0]:\n" + pp(logic_condition))
         show_info(api.info)
@@ -145,6 +178,14 @@ def main() -> None:
         show_info(api.info)
 
         print()
+        aux_rc_ack = api.set_aux_rc(12, [1600, 1400], resolution_bits=16)
+        print("SET_AUX_RC CH13-CH14 ack:\n" + pp(aux_rc_ack))
+        show_info(api.info)
+        aux_rc_channels = api.get_rc_channels()
+        print("RC channels CH13-CH14 after SET_AUX_RC:\n" + pp(aux_rc_channels[12:14]))
+        show_info(api.info)
+
+        print()
         bat_cfg = api.get_battery_config()
         print("Battery config:\n" + pp(bat_cfg))
         show_info(api.info)
@@ -188,6 +229,38 @@ def main() -> None:
         nav_status = api.get_nav_status()
         print("Navigation status:\n" + pp(nav_status))
         show_info(api.info)
+
+        print()
+        try:
+            waypoint_index_ack = api.set_waypoint_index(0)
+            print("SET_WP_INDEX ack:\n" + pp(waypoint_index_ack))
+            show_info(api.info)
+        except MSPUnsupportedError as exc:
+            print(f"SET_WP_INDEX rejected while disarmed/outside waypoint mode: {exc}")
+
+        print()
+        try:
+            cruise_heading_ack = api.set_cruise_heading(90.0)
+            print("SET_CRUISE_HEADING ack:\n" + pp(cruise_heading_ack))
+            show_info(api.info)
+        except MSPUnsupportedError as exc:
+            print(f"SET_CRUISE_HEADING rejected while disarmed/outside Course Hold mode: {exc}")
+
+        print()
+        try:
+            rth_ack = api.activate_rth()
+            print("ACTIVATE_RTH ack:\n" + pp(rth_ack))
+            show_info(api.info)
+        except MSPUnsupportedError as exc:
+            print(f"ACTIVATE_RTH rejected while disarmed: {exc}")
+
+        print()
+        try:
+            landing_ack = api.activate_landing()
+            print("ACTIVATE_LANDING ack:\n" + pp(landing_ack))
+            show_info(api.info)
+        except MSPUnsupportedError as exc:
+            print(f"ACTIVATE_LANDING rejected while disarmed: {exc}")
 
         print()
         try:

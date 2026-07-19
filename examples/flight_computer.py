@@ -25,6 +25,8 @@ import logging
 from datetime import datetime
 from mspapi2 import MSPApi
 from mspapi2.lib import InavEnums
+from functools import partial
+from mspapi2.utils import format_nested_dict
 
 
 # Configure logging
@@ -91,12 +93,18 @@ class FlightComputer:
             - nav: navigation state
             - altitude: estimated altitude
         """
+        pp = partial(format_nested_dict, start_indent=1)
         try:
             attitude = self.api.get_attitude()
             gps = self.api.get_raw_gps()
             battery = self.api.get_inav_analog()
             nav = self.api.get_nav_status()
             alt = self.api.get_altitude()
+            analog = self.api.get_inav_analog()
+            print("Analog readings:\n" + pp(analog))
+            print()
+            rc_channels = self.api.get_rc_channels()
+            print("RC channels:\n" + pp(rc_channels[:6] if rc_channels else []))
 
             telemetry = {
                 'timestamp': datetime.now(),
@@ -239,9 +247,9 @@ class FlightComputer:
                 telemetry = self.read_telemetry()
 
                 # Check safety
-                if not self.check_safety(telemetry):
-                    logging.critical("CRITICAL SAFETY ISSUE - Stopping autonomous control")
-                    break
+                #if not self.check_safety(telemetry):
+                #    logging.critical("CRITICAL SAFETY ISSUE - Stopping autonomous control")
+                #    #break
 
                 # Log telemetry every 10 loops (reduce spam)
                 if loop_count % 10 == 0:

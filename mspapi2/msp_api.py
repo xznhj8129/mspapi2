@@ -12,6 +12,13 @@ from .msp_serial import MSPSerial
 
 __all__ = ["MSPApi"]
 
+AUX_RC_RESOLUTION_MODES = {
+    2: 0,
+    4: 1,
+    8: 2,
+    16: 3,
+}
+
 
 def _scale(value: float, scale: float) -> int:
     return int(round(value * scale))
@@ -566,6 +573,40 @@ class MSPApi:
             "epv": rep["epv"] / 100.0,
         }
 
+    def get_link_stats(self) -> Dict[str, Any]:
+        self.info, rep = self._request(InavMSP.MSP2_INAV_GET_LINK_STATS)
+        return {
+            "uplinkRSSI_dBm": rep["uplinkRSSI_dBm"],
+            "uplinkLQ": rep["uplinkLQ"],
+            "uplinkSNR": rep["uplinkSNR"],
+        }
+
+    def get_dronecan_nodes(self) -> List[Dict[str, int]]:
+        self.info, rep = self._request(InavMSP.MSP2_INAV_DRONECAN_NODES)
+        node_data = rep["nodeData"]
+        return [
+            {
+                "nodeID": node_data[offset],
+                "health": node_data[offset + 1],
+                "mode": node_data[offset + 2],
+                "last_seen_ms": node_data[offset + 3],
+            }
+            for offset in range(0, rep["nodeCount"] * 4, 4)
+        ]
+
+    def get_dronecan_node_info(self, node_id: int) -> Dict[str, Any]:
+        payload = self._pack_request(InavMSP.MSP2_INAV_DRONECAN_NODE_INFO, {"nodeID": node_id})
+        self.info, rep = self._request(InavMSP.MSP2_INAV_DRONECAN_NODE_INFO, payload)
+        return {
+            "nodeID": rep["nodeID"],
+            "health": rep["health"],
+            "mode": rep["mode"],
+            "uptime_sec": rep["uptime_sec"],
+            "vendor_status_code": rep["vendor_status_code"],
+            "last_seen_ms": rep["last_seen_ms"],
+            "name": rep["name"][:rep["name_len"]].decode("utf-8"),
+        }
+
     def get_waypoint_info(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         self.info, rep = self._request(InavMSP.MSP_WP_GETINFO)
         mission_valid = bool(rep["missionValid"])
@@ -653,6 +694,22 @@ class MSPApi:
             "targetHeading": rep["targetHeading"],
         }
 
+    def set_waypoint_index(self, waypoint_index: int) -> Mapping[str, Any]:
+        payload = self._pack_request(
+            InavMSP.MSP2_INAV_SET_WP_INDEX,
+            {"wp_index": waypoint_index},
+        )
+        self.info, rep = self._request(InavMSP.MSP2_INAV_SET_WP_INDEX, payload)
+        return rep
+
+    def set_cruise_heading(self, heading_deg: float) -> Mapping[str, Any]:
+        payload = self._pack_request(
+            InavMSP.MSP2_INAV_SET_CRUISE_HEADING,
+            {"heading_centidegrees": int(round(heading_deg * 100.0))},
+        )
+        self.info, rep = self._request(InavMSP.MSP2_INAV_SET_CRUISE_HEADING, payload)
+        return rep
+
     def set_armed(self, arm: bool) -> Mapping[str, Any]:
         payload = self._pack_request(InavMSP.MSP2_INAV_ARM_DISARM, {"arm": int(arm)})
         self.info, rep = self._request(InavMSP.MSP2_INAV_ARM_DISARM, payload)
@@ -669,6 +726,47 @@ class MSPApi:
     def get_timesync_ns(self) -> int:
         self.info, rep = self._request(InavMSP.MSP2_INAV_TIMESYNC)
         return rep["timeNs"]
+
+    def set_aux_rc(
+        self,
+        start_channel_index: int,
+        channel_values: Sequence[int],
+        *,
+        resolution_bits: int = 16,
+    ) -> Mapping[str, Any]:
+        resolution_mode = AUX_RC_RESOLUTION_MODES[resolution_bits]
+        channel_data: List[int] = []
+
+        if resolution_bits == 16:
+            for value in channel_values:
+                channel_data.extend(struct.pack("<H", value))
+        else:
+            raw_values = [
+                0 if value == 0 else 1 + int(round((value - 1000) * ((1 << resolution_bits) - 2) / 1000.0))
+                for value in channel_values
+            ]
+            if resolution_bits == 8:
+                channel_data = raw_values
+            else:
+                channels_per_byte = 8 // resolution_bits
+                for offset in range(0, len(raw_values), channels_per_byte):
+                    packed = 0
+                    for subchannel in range(channels_per_byte):
+                        raw_index = offset + subchannel
+                        raw_value = raw_values[raw_index] if raw_index < len(raw_values) else 0
+                        shift = (channels_per_byte - subchannel - 1) * resolution_bits
+                        packed |= raw_value << shift
+                    channel_data.append(packed)
+
+        payload = self._pack_request(
+            InavMSP.MSP2_INAV_SET_AUX_RC,
+            {
+                "definitionByte": (start_channel_index << 3) | resolution_mode,
+                "channelData": channel_data,
+            },
+        )
+        self.info, rep = self._request(InavMSP.MSP2_INAV_SET_AUX_RC, payload)
+        return rep
 
 
     def set_heading(self, heading_deg: int) -> Mapping[str, Any]:
