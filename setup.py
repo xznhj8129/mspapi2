@@ -21,7 +21,7 @@ setup(
     install_requires=["pyserial"],
     entry_points={
         "console_scripts": [
-            "mspapi2-server=mspapi2.msp_server:main",
+            "mspapi2-shell=mspapi2.msp_shell:main",
         ],
     },
     classifiers=[
