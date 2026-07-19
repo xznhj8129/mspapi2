@@ -30,6 +30,11 @@ bin_type_map = {
 
 compound_type_map = {
     "dronecanNodeStatus_t": "BBBI",
+    "escSensorData_t": "BxhhxxiI",
+}
+
+opaque_type_map = {
+    "ledConfig_t": "6s",
 }
 
 class MSPUnpackError(ValueError):
@@ -44,19 +49,7 @@ def _load_multiwii_enum(schema_path: Path) -> type[enum.IntEnum]:
     except FileNotFoundError as exc:
         raise RuntimeError(f"InavMSP schema not found: {schema_path}") from exc
 
-    if "version" in data.keys():
-        specv = data["version"]
-        messages = data["messages"]
-    else:
-        messages = data
-
-    """"build": {
-        "fc_version": {
-            "major": 10,
-            "minor": 0,
-            "patch": 0
-        }
-    },"""
+    messages = data["messages"] if "version" in data else data
 
     members: Dict[str, int] = {}
     codes_seen: Dict[int, str] = {}
@@ -73,7 +66,7 @@ def _load_multiwii_enum(schema_path: Path) -> type[enum.IntEnum]:
         except (TypeError, ValueError) as exc:
             raise RuntimeError(f"Invalid code for {name}: {code_raw!r} in {schema_path}") from exc
         if name in members:
-            raise RuntimeError(f"Duplicate MSP message name in schema: {name}in {schema_path}")
+            raise RuntimeError(f"Duplicate MSP message name in schema: {name} in {schema_path}")
         if code in codes_seen:
             raise RuntimeError(f"Duplicate MSP code {code} shared by {codes_seen[code]} and {name} in {schema_path}")
         members[name] = code
@@ -186,7 +179,7 @@ class MSPCodec:
                 return None
             return f"{array_length}{ctype_val_code}"
 
-        direct = bin_type_map.get(ctype_val)
+        direct = bin_type_map.get(ctype_val) or opaque_type_map.get(ctype_val)
         if direct:
             return direct
 
@@ -219,7 +212,7 @@ class MSPCodec:
         return _PayloadSide(struct_fmt=fmt, field_names=names, fields=tuple(fields_desc), repeating=repeating)
 
     @classmethod
-    def _parse_one(cls, name: str, node: Mapping[str, Any]) -> Optional[MessageSpec]:
+    def _parse_one(cls, name: str, node: Mapping[str, Any]) -> MessageSpec:
         code = InavMSP(int(node["code"]))
 
         req = cls._payload_side_from_dict(node.get("request"))
@@ -280,6 +273,11 @@ class MSPCodec:
             return size
         if isinstance(size, str) and size.isdigit():
             return int(size)
+        ctype = str(field.get("ctype", ""))
+        if "[" in ctype and ctype.endswith("]"):
+            inline_size = ctype.split("[", 1)[1][:-1].strip()
+            if inline_size.isdigit():
+                return int(inline_size)
         return None
 
     @staticmethod
@@ -408,6 +406,34 @@ class MSPCodec:
 
         return flat
 
+    @classmethod
+    def _pack_variable_payload(
+        cls,
+        message_name: str,
+        side: _PayloadSide,
+        values: Union[Iterable[Any], Mapping[str, Any]],
+    ) -> bytes:
+        if isinstance(values, Mapping):
+            data = values
+        else:
+            ordered_values = cls._values_in_order(values, side.field_names)
+            data = dict(zip(side.field_names, ordered_values))
+
+        payload = bytearray()
+        for name, field in zip(side.field_names, side.fields):
+            value = data[name]
+            if cls._field_is_array(field):
+                base = cls._field_array_base(field)
+                if base == "char":
+                    payload.extend(value.encode("latin1") if isinstance(value, str) else bytes(value))
+                else:
+                    items = list(value)
+                    payload.extend(struct.pack("<" + bin_type_map[base] * len(items), *items))
+            else:
+                field_fmt = cls._normalize_fmt(cls._struct_code_for_field(field))
+                payload.extend(struct.pack(field_fmt, value))
+        return bytes(payload)
+
     # ----- Public API -----
 
     def pack_request(self, code: InavMSP, values: Union[Iterable[Any], Mapping[str, Any]] = ()) -> bytes:
@@ -423,27 +449,7 @@ class MSPCodec:
                 if values not in ((), [], {}):
                     raise ValueError(f"{spec.name}: request has no payload")
                 return b""
-
-            if isinstance(values, Mapping):
-                data = values
-            else:
-                ordered_values = self._values_in_order(values, side.field_names)
-                data = dict(zip(side.field_names, ordered_values))
-
-            payload = bytearray()
-            for name, field in zip(side.field_names, side.fields):
-                value = data[name]
-                if self._field_is_array(field):
-                    base = self._field_array_base(field)
-                    if base == "char":
-                        payload.extend(value.encode("latin1") if isinstance(value, str) else bytes(value))
-                    else:
-                        items = list(value)
-                        payload.extend(struct.pack("<" + bin_type_map[base] * len(items), *items))
-                else:
-                    field_fmt = self._normalize_fmt(self._struct_code_for_field(field))
-                    payload.extend(struct.pack(field_fmt, value))
-            return bytes(payload)
+            return self._pack_variable_payload(spec.name, side, values)
 
         ordered = self._flatten_struct_values(spec.name, side, values)
         try:
@@ -477,28 +483,47 @@ class MSPCodec:
             raise MSPUnpackError(f"{spec.name}: unpack_reply error: {e}")
         return self._map_struct_values(spec.name, side, values)
 
-    # why
     def unpack_request(self, code: InavMSP, payload: bytes) -> Dict[str, Any]:
         spec = self._get_spec(code)
-        fmt = spec.request.struct_fmt
+        side = spec.request
+        fmt = side.struct_fmt
         if fmt is None:
-            if payload not in (b"",):
-                raise MSPUnpackError(f"{spec.name}: request expected empty payload, got {len(payload)} bytes")
-            return {}
-        size = struct.calcsize(fmt)
-        if len(payload) != size:
-            raise MSPUnpackError(f"{spec.name}: request size {len(payload)} != expected {size}")
+            return self._decode_variable_payload(spec.name, side, payload)
+        expected_size = side.size
+        while expected_size is not None and len(payload) < expected_size \
+                and side.fields and side.fields[-1].get("optional"):
+            side = self._payload_side_from_dict({"payload": side.fields[:-1]})
+            fmt = side.struct_fmt
+            expected_size = side.size
+        if expected_size is not None and len(payload) != expected_size:
+            raise MSPUnpackError(f"{spec.name}: request size {len(payload)} != expected {expected_size}")
         values = struct.unpack(fmt, payload)
-        return self._map_struct_values(spec.name, spec.request, values)
+        return self._map_struct_values(spec.name, side, values)
 
     def pack_reply(self, code: InavMSP, values: Union[Iterable[Any], Mapping[str, Any]] = ()) -> bytes:
         spec = self._get_spec(code)
-        fmt = spec.reply.struct_fmt
+        side = spec.reply
+        if isinstance(values, Mapping):
+            while side.fields and side.fields[-1].get("optional") \
+                    and side.field_names[-1] not in values:
+                side = self._payload_side_from_dict({"payload": side.fields[:-1]})
+        fmt = side.struct_fmt
+        if side.repeating:
+            payload = bytearray()
+            for entry in values:
+                if fmt is None:
+                    payload.extend(self._pack_variable_payload(spec.name, side, entry))
+                else:
+                    ordered = self._flatten_struct_values(spec.name, side, entry)
+                    payload.extend(struct.pack(fmt, *ordered))
+            return bytes(payload)
         if fmt is None:
+            if side.fields:
+                return self._pack_variable_payload(spec.name, side, values)
             if values not in ((), [], {}):
                 raise MSPUnpackError(f"{spec.name}: reply has no payload")
             return b""
-        ordered = self._flatten_struct_values(spec.name, spec.reply, values)
+        ordered = self._flatten_struct_values(spec.name, side, values)
         try:
             return struct.pack(fmt, *ordered)
         except struct.error as e:
@@ -581,20 +606,15 @@ class MSPCodec:
         if offset > total_len:
             raise ValueError(f"{message_name}: field '{name}' offset {offset} exceeds payload size {total_len}")
 
-        is_array = bool(field.get("array")) or "[]" in str(field.get("ctype", ""))
+        is_array = MSPCodec._field_is_array(field)
 
-        if offset == total_len and is_array and MSPCodec._resolve_dynamic_length(field, parsed) == 0:
-            base_ctype = field.get("array_ctype") or field.get("ctype", "")
-            return name, b"" if base_ctype.replace("[]", "").strip() == "char" else [], offset
-
-        if offset == total_len:
+        if offset == total_len and not is_array:
             raise ValueError(f"{message_name}: field '{name}' offset {offset} exceeds payload size {total_len}")
 
         if is_array:
-            base_ctype = field.get("array_ctype") or field.get("ctype", "")
+            base_ctype = MSPCodec._field_array_base(field)
             if not base_ctype:
                 raise ValueError(f"{message_name}: array field '{name}' missing base type")
-            base_ctype = base_ctype.replace("[]", "").strip()
             if base_ctype == "char":
                 elem_size = 1
                 base_code = None
@@ -603,9 +623,7 @@ class MSPCodec:
                 if not base_code:
                     raise ValueError(f"{message_name}: unsupported array base type '{base_ctype}' for field '{name}'")
                 elem_size = struct.calcsize("<" + base_code)
-            count = field.get("array_size")
-            if isinstance(count, str) and count.isdigit():
-                count = int(count)
+            count = MSPCodec._field_array_length(field)
             if isinstance(count, int) and count > 0:
                 length = count
             else:
@@ -657,10 +675,7 @@ class MSPCodec:
         if explicit:
             length = parsed.get(explicit)
             if length is not None:
-                try:
-                    return int(length)
-                except (TypeError, ValueError):
-                    pass
+                return int(length)
 
         name = field.get("name") or ""
         candidates: List[str] = []
@@ -677,8 +692,5 @@ class MSPCodec:
                 ])
         for candidate in candidates:
             if candidate and candidate in parsed:
-                try:
-                    return int(parsed[candidate])
-                except (TypeError, ValueError):
-                    continue
+                return int(parsed[candidate])
         return None

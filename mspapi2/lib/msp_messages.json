@@ -9810,6 +9810,7 @@
                         "ctype": "escSensorData_t",
                         "array": true,
                         "array_size": 0,
+                        "length_field": "motorCount",
                         "units": ""
                     }
                 ]
@@ -11231,7 +11232,8 @@
                         "name": "loiterRadius",
                         "ctype": "int32_t",
                         "desc": "Optional temporary fixed-wing PosHold loiter radius override. Appended field; omit to leave unchanged. `0` clears the override and uses `navConfig()->fw.loiter_radius`.",
-                        "units": "cm"
+                        "units": "cm",
+                        "optional": true
                     }
                 ]
             },
@@ -11279,7 +11281,8 @@
                         "name": "loiterRadius",
                         "ctype": "uint32_t",
                         "desc": "Temporary fixed-wing PosHold loiter radius override. `0` means no override; the configured `navConfig()->fw.loiter_radius` is used.",
-                        "units": "cm"
+                        "units": "cm",
+                        "optional": true
                     }
                 ]
             },

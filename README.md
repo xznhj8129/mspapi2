@@ -7,6 +7,11 @@ Lightweight Python client and server for INAV’s MultiWii Serial Protocol (MSP)
 - `MSPCodec` (mspapi2/mspcodec.py): packs/unpacks MSP payloads from a JSON schema.
 - Examples: `example_api.py` (read a bunch of MSP data and push RC/waypoint writes).
 
+## Versioning
+Different branches address different versions of INAV. Each branch matches the corresponding INAV branch, ie `maintenance-9.x`, `release/9.1`, `maintenance-10.x`, `master`. 
+The `dev` branch is backend development based on `master`.
+
+
 ## Setup
 1. Use the INAV schema files that match the firmware you want to talk to. If the JSON files are from the wrong INAV release, message decoding will be wrong. Refresh them with:
 ```

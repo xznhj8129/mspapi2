@@ -24,7 +24,7 @@ from queue import Queue, Empty, Full
 from typing import Optional, Tuple, Callable, Dict, Deque, List, Any
 from collections import deque
 import enum
-from .lib import *
+from .lib import InavMSP
 
 # ------------------------
 # Utilities / constants
@@ -62,6 +62,7 @@ class MSPMessage:
     code: int        # 0..65535
     payload: bytes
     unsupported: bool = False
+    direction: int = DIR_FROM_FC
 
 class MSPResult(enum.IntEnum):
     MSP_RESULT_ACK = 0
@@ -142,6 +143,8 @@ class _MSPParser:
                 elif b == MSP_V2_SYNC_2:    # 'X' -> V2
                     self.version = 2
                     self.state = 2
+                elif b == MSP_V1_SYNC_1:
+                    self.state = 1
                 else:
                     # wrong second sync; resync
                     self.state = 0
@@ -153,12 +156,12 @@ class _MSPParser:
                     return None
 
                 if b == UNSUPPORTED_FLAG:
-                    self.direction = 1
+                    self.direction = DIR_FROM_FC
                     self.unsupported = True
                 elif b == DIR_FROM_FC:
-                    self.direction = 1
+                    self.direction = DIR_FROM_FC
                 elif b == DIR_TO_FC:
-                    self.direction = 0
+                    self.direction = DIR_TO_FC
                 else:
                     # invalid; resync
                     self.state = 0
@@ -306,6 +309,7 @@ class _MSPParser:
                         code=self.code,
                         payload=bytes(self.payload),
                         unsupported=self.unsupported,
+                        direction=self.direction,
                     )
                     self.reset()
                     return msg
@@ -343,7 +347,7 @@ class MSPSerial:
         udp: bool = False,
         force_msp_v2: bool = False,
         *,
-        max_retries: int = 3,
+        max_retries: int = 1,
         reconnect_delay: float = 0.5,
         log_path: Optional[str] = "msp.log",
     ) -> None:
@@ -394,6 +398,7 @@ class MSPSerial:
         self._wlock = threading.Lock()
         self._q_lock = threading.Lock()
         self._request_lock = threading.Lock()
+        self._lifecycle_lock = threading.RLock()
 
         self._last_write_ts = 0.0
         self._last_activity = time.monotonic()
@@ -422,83 +427,88 @@ class MSPSerial:
     # ---------- lifecycle ----------
 
     def open(self) -> None:
-        if self._is_open() and self._rx_thread and self._rx_thread.is_alive():
-            return
-        self._reader_error = None
-        if self._use_tcp:
-            url = self.port
-            if "://" not in url:
-                url = f"socket://{url}"
-            self._ser = serial.serial_for_url(  # type: ignore[attr-defined]
-                url,
-                timeout=self.read_timeout,
-                write_timeout=self.write_timeout,
-            )
-        elif self._use_udp:
-            host, port_str = self.port.split(":", 1)
-            host = host.strip()
-            port_num = int(port_str)
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(self.read_timeout)
-            sock.connect((host, port_num))
-            self._ser = sock  # type: ignore[assignment]
-            self._udp_active = True
-        else:
-            self._ser = serial.Serial(
-                port=self.port,
-                baudrate=self.baudrate,
-                timeout=self.read_timeout,
-                write_timeout=self.write_timeout,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                xonxoff=False,
-                rtscts=False,
-                dsrdtr=False,
-            )
-        # Clear buffers
-        for method in ("reset_input_buffer", "reset_output_buffer"):
-            if hasattr(self._ser, method):
-                try:
-                    getattr(self._ser, method)()
-                except (OSError, serial.SerialException):
-                    # Best-effort cleanup only; open proceeds and request/read paths surface real transport failures.
-                    pass
+        with self._lifecycle_lock:
+            if self._is_open() and self._rx_thread and self._rx_thread.is_alive():
+                return
+            if self._ser is not None:
+                self.close()
 
-        # Start reader thread
-        self._stop_evt.clear()
-        self._rx_thread = threading.Thread(target=self._reader_loop, name="MSPSerialReader", daemon=True)
-        self._rx_thread.start()
-        self._last_activity = time.monotonic()
+            self._reader_error = None
+            self._parser.buf.clear()
+            self._parser.reset()
+            if self._use_tcp:
+                url = self.port
+                if "://" not in url:
+                    url = f"socket://{url}"
+                self._ser = serial.serial_for_url(  # type: ignore[attr-defined]
+                    url,
+                    timeout=self.read_timeout,
+                    write_timeout=self.write_timeout,
+                )
+            elif self._use_udp:
+                host, port_str = self.port.split(":", 1)
+                host = host.strip()
+                port_num = int(port_str)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.settimeout(self.read_timeout)
+                sock.connect((host, port_num))
+                self._ser = sock  # type: ignore[assignment]
+                self._udp_active = True
+            else:
+                self._ser = serial.Serial(
+                    port=self.port,
+                    baudrate=self.baudrate,
+                    timeout=self.read_timeout,
+                    write_timeout=self.write_timeout,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    xonxoff=False,
+                    rtscts=False,
+                    dsrdtr=False,
+                )
+
+            for method in ("reset_input_buffer", "reset_output_buffer"):
+                if hasattr(self._ser, method):
+                    try:
+                        getattr(self._ser, method)()
+                    except (OSError, serial.SerialException):
+                        pass
+
+            self._stop_evt.clear()
+            self._rx_thread = threading.Thread(target=self._reader_loop, name="MSPSerialReader", daemon=True)
+            self._rx_thread.start()
+            self._last_activity = time.monotonic()
 
     def close(self) -> None:
-        self._stop_evt.set()
-        if self._rx_thread and self._rx_thread.is_alive():
-            self._rx_thread.join(timeout=1.0)
-        self._rx_thread = None
-        self._reader_error = None
-
-        if self._ser:
-            try:
-                self._ser.close()
-                if self._use_udp:
-                    self._udp_active = False
-            except (OSError, serial.SerialException):
-                # Close during teardown is non-fatal; caller may already be handling the primary exception.
-                pass
-            finally:
+        with self._lifecycle_lock:
+            self._stop_evt.set()
+            reader = self._rx_thread
+            ser = self._ser
+            if ser is not None:
+                try:
+                    ser.close()
+                except (OSError, serial.SerialException):
+                    pass
+            if reader and reader is not threading.current_thread() and reader.is_alive():
+                reader.join(timeout=max(self.read_timeout * 2.0, 1.0))
+            self._rx_thread = None
+            if self._ser is ser:
                 self._ser = None
+            self._udp_active = False
+            self._reader_error = None
+            self._parser.buf.clear()
+            self._parser.reset()
 
-        # Drain queues
-        with self._q_lock:
-            self._rx_all = Queue(maxsize=self._rx_all.maxsize)
-            self._rx_by_code.clear()
-        if self._log_fp:
-            try:
-                self._log_fp.flush()
-                self._log_fp.close()
-            finally:
-                self._log_fp = None
+            with self._q_lock:
+                self._rx_all = Queue(maxsize=self._rx_all.maxsize)
+                self._rx_by_code.clear()
+            if self._log_fp:
+                try:
+                    self._log_fp.flush()
+                    self._log_fp.close()
+                finally:
+                    self._log_fp = None
 
     # ---------- public I/O ----------
 
@@ -516,7 +526,6 @@ class MSPSerial:
 
         ver = self._choose_version(code, payload, force_version, self._force_msp_v2)
         frame = self._encode(ver, code, payload)
-        self._log_io("OUT", frame)
 
         # Respect min gap between writes to avoid overwhelming FC
         with self._wlock:
@@ -528,7 +537,10 @@ class MSPSerial:
                 n = self._ser.send(frame)  # type: ignore[operator]
             else:
                 n = self._ser.write(frame)
+                if n != len(frame):
+                    raise serial.SerialTimeoutException(f"MSP write sent {n} of {len(frame)} bytes")
                 self._ser.flush()  # push to driver
+            self._log_io("OUT", frame)
             self._last_write_ts = time.monotonic()
             self._last_activity = self._last_write_ts
             return n
@@ -602,11 +614,6 @@ class MSPSerial:
                     }
                     if attempt >= self._max_retries or not self._retry_connection(attempt):
                         break
-                except Exception as exc:
-                    # Preserve the original unexpected error and re-raise after loop via `last_error`.
-                    last_error = exc
-                    break
-
             if last_error:
                 raise last_error
             raise RuntimeError("MSP transport failure")
@@ -626,29 +633,38 @@ class MSPSerial:
                         except socket.timeout:
                             continue
                     else:
-                        chunk = ser.read(4096)
+                        chunk = ser.read(1)
                         if not chunk:
                             continue
+                        waiting = ser.in_waiting
+                        if waiting:
+                            chunk += ser.read(waiting)
                     self._last_activity = time.monotonic()
                     self._log_io("IN", chunk)
                     messages = self._parser.feed(chunk)
                     for msg in messages:
                         self._dispatch(msg)
                 except (serial.SerialException, OSError, socket.error):
-                    self._record_reader_error()
+                    if not self._stop_evt.is_set():
+                        self._record_reader_error()
                     break
                 except Exception as exc:
-                    # Unexpected parser/dispatch failure is recorded; `_ensure_reader_ok()` will raise on next request.
-                    self._record_reader_error(exc)
+                    if not self._stop_evt.is_set():
+                        self._record_reader_error(exc)
                     break
         finally:
             try:
                 ser.close()
             except (OSError, serial.SerialException):
                 self._log_io("ERR", b"failed closing serial on reader exit")
-            self._ser = None
+            if self._ser is ser:
+                self._ser = None
+            if self._use_udp:
+                self._udp_active = False
 
     def _dispatch(self, msg: MSPMessage) -> None:
+        if msg.direction != DIR_FROM_FC:
+            return
         try:
             self._rx_all.put_nowait(msg)
         except Full:
@@ -692,18 +708,13 @@ class MSPSerial:
         self._ensure_reader_ok()
 
     def _retry_connection(self, attempt: int) -> bool:
-        try:
-            self.close()
-        except Exception:
-            # Retry path should not mask the original request failure; close errors are intentionally ignored here.
-            pass
+        self.close()
         time.sleep(self._reconnect_delay * attempt)
         try:
             self.open()
             self._reconnects += 1
             return True
-        except Exception:
-            # Keep retry helper side-effect free: caller decides how to propagate/fail after reconnect attempt.
+        except (serial.SerialException, OSError):
             return False
 
     def _request_core(
@@ -730,9 +741,10 @@ class MSPSerial:
             if remaining <= 0.0:
                 raise TimeoutError(f"MSP request timeout waiting for {code_label}")
             try:
-                msg: MSPMessage = q.get(timeout=remaining)
+                msg: MSPMessage = q.get(timeout=min(remaining, max(self.read_timeout, 0.05)))
             except Empty:
-                raise TimeoutError(f"MSP request timeout waiting for {code_label}")
+                self._ensure_reader_ok()
+                continue
             if msg.unsupported:
                 raise MSPUnsupportedError(f"MSP code {code_label} unsupported (! response)")
             return (msg.code, msg.payload)
@@ -743,16 +755,18 @@ class MSPSerial:
             return int(force_version)
         if force_msp_v2:
             return 2
-        # MSP v2 required for codes >255 or payload >256 (incl. header constraint)
-        if code > 0xFF or len(payload) > 0xFF:
+        # MSP v1 uses 255 as the jumbo-frame sentinel.
+        if code > 0xFF or len(payload) >= JUMBO_LIMIT_V1:
             return 2
         return 1
 
     @staticmethod
     def _encode(version: int, code: int, payload: bytes) -> bytes:
         if version == 1:
+            if code > 0xFF:
+                raise ValueError(f"MSP V1 code {code} exceeds 8-bit range")
             # V1: "$" "M" "<" len(1) code(1) payload len bytes xor_checksum(1)
-            if len(payload) <= 0xFF:
+            if len(payload) < JUMBO_LIMIT_V1:
                 length_byte = len(payload) & 0xFF
                 header = bytes([MSP_V1_SYNC_1, MSP_V1_SYNC_2, DIR_TO_FC, length_byte, code & 0xFF])
                 checksum = length_byte ^ (code & 0xFF)
@@ -797,7 +811,7 @@ class MSPSerial:
 
     def _ensure_reader_ok(self) -> None:
         if self._reader_error is not None:
-            raise RuntimeError(f"MSP reader stopped: {self._reader_error}")
+            raise RuntimeError(f"MSP reader stopped: {self._reader_error}") from self._reader_error
 
     def _record_reader_error(self, exc: Optional[BaseException] = None) -> None:
         err = exc or sys.exc_info()[1] or RuntimeError("unknown reader error")

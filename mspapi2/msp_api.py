@@ -49,6 +49,7 @@ class MSPApi:
         tcp_endpoint: Optional[str] = None,
         udp_endpoint: Optional[str] = None,
         force_msp_v2: bool = False,
+        max_retries: int = 1,
         serial_transport: Optional[Any] = None,
     ) -> None:
         schema_path = codec_path or Path(__file__).with_name("lib") / "msp_messages.json"
@@ -70,6 +71,7 @@ class MSPApi:
                     write_timeout=write_timeout_ms / 1000.0,
                     tcp=True,
                     force_msp_v2=force_msp_v2,
+                    max_retries=max_retries,
                 )
             elif udp_target:
                 if ":" not in udp_target:
@@ -81,6 +83,7 @@ class MSPApi:
                     write_timeout=write_timeout_ms / 1000.0,
                     udp=True,
                     force_msp_v2=True,
+                    max_retries=max_retries,
                 )
             else:
                 if not port:
@@ -91,6 +94,7 @@ class MSPApi:
                     read_timeout=read_timeout_ms / 1000.0,
                     write_timeout=write_timeout_ms / 1000.0,
                     force_msp_v2=force_msp_v2,
+                    max_retries=max_retries,
                 )
 
 
@@ -136,7 +140,7 @@ class MSPApi:
     # ----- helpers -----
 
     def _build_info(self, diag: Optional[Dict[str, Any]], code: Optional[Union[InavMSP, int]]) -> Dict[str, Any]:
-        code_int = int(code.value) if isinstance(code, InavMSP) else int(code)
+        code_int = None if code is None else int(code)
         info: Dict[str, Any] = {
             "code": code_int,
             "latency_ms": None,
@@ -251,15 +255,15 @@ class MSPApi:
                 mask |= 1 << int(box_index)
         return mask
 
-    def _decode_active_modes_mask(self, mask: Optional[int]) -> List[boxes.BoxEnum]:
+    def _decode_active_modes_mask(self, mask: Optional[int]) -> List[Union[boxes.BoxEnum, int]]:
         if not mask:
             return []
         box_ids = self._ensure_box_ids_cached()
-        active_modes: List[boxes.BoxEnum] = []
+        active_modes: List[Union[boxes.BoxEnum, int]] = []
         for idx, permanent_id in enumerate(box_ids):
             if not (mask & (1 << idx)):
                 continue
-            active_modes.append(boxes.BoxEnum(permanent_id))
+            active_modes.append(boxes.BoxEnum._value2member_map_.get(permanent_id, permanent_id))
         return active_modes
 
     def get_inav_version(self) -> Dict[str, int]:
@@ -271,7 +275,7 @@ class MSPApi:
 
     # ----- API surface -----
 
-    def get_api_version(self) -> Tuple[Dict[str, Any], Dict[str, int]]:
+    def get_api_version(self) -> Dict[str, int]:
         self.info, rep = self._request(InavMSP.MSP_API_VERSION)
         return {
             "mspProtocolVersion": rep["mspProtocolVersion"],
@@ -279,12 +283,20 @@ class MSPApi:
             "apiVersionMinor": rep["apiVersionMinor"],
         }
 
-    def get_fc_variant(self) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    def get_fc_version(self) -> Dict[str, int]:
+        self.info, rep = self._request(InavMSP.MSP_FC_VERSION)
+        return {
+            "major": rep["fcVersionMajor"],
+            "minor": rep["fcVersionMinor"],
+            "patch": rep["fcVersionPatch"],
+        }
+
+    def get_fc_variant(self) -> Dict[str, str]:
         self.info, rep = self._request(InavMSP.MSP_FC_VARIANT)
         identifier = rep["fcVariantIdentifier"].rstrip(b"\x00").decode("ascii", errors="ignore")
         return {"fcVariantIdentifier": identifier}
 
-    def get_board_info(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def get_board_info(self) -> Dict[str, Any]:
         self.info, rep = self._request(InavMSP.MSP_BOARD_INFO)
         board_identifier = rep["boardIdentifier"].rstrip(b"\x00").decode("ascii", errors="ignore")
         target_name = rep["targetName"].rstrip(b"\x00").decode("ascii", errors="ignore")
@@ -300,7 +312,7 @@ class MSPApi:
             "targetName": target_name,
         }
 
-    def get_sensor_config(self) -> Tuple[Dict[str, Any], Dict[str, InavEnums]]:
+    def get_sensor_config(self) -> Dict[str, Any]:
         self.info, rep = self._request(InavMSP.MSP_SENSOR_CONFIG)
         sensor_enums = {
             "accHardware": InavEnums.accelerationSensor_e,
@@ -316,12 +328,12 @@ class MSPApi:
                 converted[key] = enum_cls(rep[key])
         return converted
 
-    def get_box_ids(self) -> Tuple[Dict[str, Any], List[int]]:
+    def get_box_ids(self) -> List[int]:
         self.info, rep = self._request(InavMSP.MSP_BOXIDS)
         self.box_ids = list(rep["boxIds"])
         return list(self.box_ids)
 
-    def get_mode_ranges(self) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    def get_mode_ranges(self) -> List[Dict[str, Any]]:
         box_ids = self._ensure_box_ids_cached()
         self.info, entries = self._request(InavMSP.MSP_MODE_RANGES)
         min_pwm = InavDefines.CHANNEL_RANGE_MIN
@@ -330,9 +342,9 @@ class MSPApi:
         armfound = False
         for entry in entries:
             permanent_id = entry["modePermanentId"]
-            if armfound and permanent_id == 0:
-                continue
-            else:
+            if permanent_id == 0:
+                if armfound:
+                    continue
                 armfound = True
             aux_index = entry["auxChannelIndex"]
             start_step = entry["rangeStartStep"]
@@ -352,7 +364,7 @@ class MSPApi:
             )
         return summary
 
-    def get_rx_map(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def get_rx_map(self) -> Dict[int, Dict[str, Any]]:
         self.info, rep = self._request(InavMSP.MSP_RX_MAP)
         rc_map = list(rep.get("rcMap"))
         decoded= {}
@@ -366,7 +378,7 @@ class MSPApi:
         self.rxmap = decoded
         return decoded
 
-    def get_inav_status(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def get_inav_status(self) -> Dict[str, Any]:
         self.info, rep = self._request(InavMSP.MSP2_INAV_STATUS)
         active_modes = self._decode_active_modes_mask(rep.get("activeModes"))
         arming_flags_raw = rep["armingFlags"]
@@ -388,7 +400,7 @@ class MSPApi:
             "mixerProfile": rep["mixerProfile"],
         }
 
-    def get_inav_analog(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def get_inav_analog(self) -> Dict[str, Any]:
         self.info, rep = self._request(InavMSP.MSP2_INAV_ANALOG)
         battery_flags_raw = rep["batteryFlags"]
         battery_state = InavEnums.batteryState_e((battery_flags_raw >> 2) & 0x3)
@@ -409,7 +421,7 @@ class MSPApi:
             "rssi": rep["rssi"],
         }
 
-    def get_rx_config(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def get_rx_config(self) -> Dict[str, Any]:
         self.info, rep = self._request(InavMSP.MSP_RX_CONFIG)
         return {
             "serialRxProvider": InavEnums.rxSerialReceiverType_e(rep["serialRxProvider"]),
@@ -429,7 +441,7 @@ class MSPApi:
             "receiverType": InavEnums.rxReceiverType_e(rep["receiverType"]),
         }
 
-    def get_logic_condition(self, condition_index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def get_logic_condition(self, condition_index: int) -> Dict[str, Any]:
         payload = self._pack_request(
             InavMSP.MSP2_INAV_LOGIC_CONDITIONS_SINGLE, {"conditionIndex": condition_index}
         )
@@ -437,7 +449,7 @@ class MSPApi:
         flags_raw = rep["flags"]
         return {
             "enabled": bool(rep["enabled"]),
-            "activatorId": None if rep["activatorId"] == 0xFF else rep["activatorId"],
+            "activatorId": None if rep["activatorId"] in (-1, 0xFF) else rep["activatorId"],
             "operation": InavEnums.logicOperation_e(rep["operation"]),
             "operandAType": InavEnums.logicOperandType_e(rep["operandAType"]),
             "operandAValue": rep["operandAValue"],
@@ -448,7 +460,7 @@ class MSPApi:
             ],
         }
 
-    def get_attitude(self) -> Tuple[Dict[str, Any], Dict[str, float]]:
+    def get_attitude(self) -> Dict[str, float]:
         self.info, rep = self._request(InavMSP.MSP_ATTITUDE)
         return {
             "roll": rep["roll"] / 10.0,
@@ -456,7 +468,7 @@ class MSPApi:
             "yaw": float(rep["yaw"]),
         }
 
-    def get_altitude(self) -> Tuple[Dict[str, Any], Dict[str, float]]:
+    def get_altitude(self) -> Dict[str, float]:
         self.info, rep = self._request(InavMSP.MSP_ALTITUDE)
         return {
             "estimatedAltitude": rep["estimatedAltitude"] / 100.0,
@@ -464,7 +476,7 @@ class MSPApi:
             "baroAltitude": rep["baroAltitude"] / 100.0,
         }
 
-    def get_imu(self) -> Tuple[Dict[str, Any], Dict[str, Dict[str, float]]]:
+    def get_imu(self) -> Dict[str, Dict[str, float]]:
         self.info, rep = self._request(InavMSP.MSP_RAW_IMU)
         axes = ("X", "Y", "Z")
         return {
@@ -473,7 +485,7 @@ class MSPApi:
             "mag": {axis: rep[f"mag{axis}"] for axis in axes},
         }
 
-    def get_rc_channels(self) -> Tuple[Dict[str, Any], List[int]]:
+    def get_rc_channels(self) -> List[int]:
         self.info, payload = self._request_raw(InavMSP.MSP_RC)
         channel_width = 2
         if len(payload) % channel_width:
@@ -482,13 +494,13 @@ class MSPApi:
         values = list(struct.unpack(f"<{channel_count}H", payload)) if channel_count else []
         return values
 
-    def get_ch(self, channel: Union[int, str]) -> Tuple[Dict[str, Any], int]:
+    def get_ch(self, channel: Union[int, str]) -> int:
         """
         Return the current value for a channel referenced either by numeric index
         or by the friendly name defined in the RX map (e.g. 'pitch').
         """
         idx = self._resolve_channel_index(channel)
-        self.info, channels = self.get_rc_channels()
+        channels = self.get_rc_channels()
         if idx >= len(channels):
             raise IndexError(f"Channel index {idx} is out of range for RC payload of size {len(channels)}")
         return channels[idx]
@@ -516,12 +528,11 @@ class MSPApi:
                 max_idx = idx
         if max_idx < 0:
             raise ValueError("channels must contain at least one override")
-        _, current = self.get_rc_channels()
-        values = list(current)
+        values = self.get_rc_channels()
         if not values:
-            values = [1500] * (max_idx + 1)
-        elif len(values) <= max_idx:
-            values.extend([1500] * (max_idx + 1 - len(values)))
+            raise RuntimeError("Cannot preserve unspecified channels because MSP_RC returned no channel data")
+        if len(values) <= max_idx:
+            raise IndexError(f"Channel index {max_idx} is out of range for RC payload of size {len(values)}")
         for idx, value in resolved:
             values[idx] = value
         return values
@@ -543,7 +554,7 @@ class MSPApi:
                 raise ValueError(f"Unsupported axis '{axis}' (use roll/pitch/yaw)")
         return mask
 
-    def get_battery_config(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def get_battery_config(self) -> Dict[str, Any]:
         self.info, rep = self._request(InavMSP.MSP2_INAV_BATTERY_CONFIG)
         return {
             "vbatScale": rep["vbatScale"],
@@ -561,7 +572,7 @@ class MSPApi:
             "capacityUnit": InavEnums.batCapacityUnit_e(rep["capacityUnit"]),
         }
 
-    def get_gps_statistics(self) -> Tuple[Dict[str, Any], Dict[str, float]]:
+    def get_gps_statistics(self) -> Dict[str, float]:
         self.info, rep = self._request(InavMSP.MSP_GPSSTATISTICS)
         packet_count = max(rep["packetCount"], 1)
         return {
@@ -607,7 +618,7 @@ class MSPApi:
             "name": rep["name"][:rep["name_len"]].decode("utf-8"),
         }
 
-    def get_waypoint_info(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def get_waypoint_info(self) -> Dict[str, Any]:
         self.info, rep = self._request(InavMSP.MSP_WP_GETINFO)
         mission_valid = bool(rep["missionValid"])
         payload = {
@@ -621,9 +632,8 @@ class MSPApi:
             payload["waypointsRemaining"] = max(remaining, 0)
         return payload
 
-    def get_raw_gps(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def get_raw_gps(self) -> Dict[str, Any]:
         self.info, rep = self._request(InavMSP.MSP_RAW_GPS)
-        ground_course = rep["groundCourse"] / 10.0 if "groundCourse" in rep else rep["speed"] / 10.0
         return {
             "fixType": InavEnums.gpsFixType_e(rep["fixType"]),
             "numSat": rep["numSat"],
@@ -631,7 +641,7 @@ class MSPApi:
             "longitude": rep["longitude"] / 1e7,
             "altitude": rep["altitude"] / 100.0,
             "speed": rep["speed"] / 100.0,
-            "groundCourse": ground_course,
+            "groundCourse": rep["groundCourse"] / 10.0,
         }
 
     def set_waypoint(
@@ -664,7 +674,7 @@ class MSPApi:
         self.info, rep = self._request(InavMSP.MSP_SET_WP, payload)
         return rep
 
-    def get_waypoint(self, waypoint_index: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def get_waypoint(self, waypoint_index: int) -> Dict[str, Any]:
         payload = self._pack_request(InavMSP.MSP_WP, {"waypointIndex": waypoint_index})
         self.info, rep = self._request(InavMSP.MSP_WP, payload)
         return {
@@ -679,7 +689,7 @@ class MSPApi:
             "flag": rep["flag"],
         }
 
-    def get_nav_status(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def get_nav_status(self) -> Dict[str, Any]:
         self.info, rep = self._request(InavMSP.MSP_NAV_STATUS)
         active_wp_action = rep["activeWpAction"]
         active_wp_action_enum = InavEnums.navWaypointActions_e._value2member_map_.get(active_wp_action, active_wp_action)
@@ -779,7 +789,7 @@ class MSPApi:
         self.info, rep = self._request(InavMSP.MSP_SET_HEAD, payload)
         return rep
 
-    def get_active_modes(self) -> List[boxes.BoxEnum]:
+    def get_active_modes(self) -> List[Union[boxes.BoxEnum, int]]:
         """
         Returns a decoded list of currently active BoxEnum values by combining NAV/INAV status data with cached box IDs.
         Falls back to MSP2_INAV_STATUS or MSP_ACTIVEBOXES if MSP_NAV_STATUS does not provide the bitmask.
@@ -816,7 +826,7 @@ class MSPApi:
         battery_voltage: float,
         airspeed: float,
         ext_flags: int,
-    ) -> Tuple[Dict[str, Any], Mapping[str, Any]]:
+    ) -> Mapping[str, Any]:
         gps_fix_type = int(gps["fix_type"])
         gps_num_sat = int(gps["num_sat"])
         gps_lat = _scale(gps["lat"], 1e7)
@@ -874,7 +884,7 @@ class MSPApi:
             return {}
         return self._codec.unpack_reply(InavMSP.MSP_SIMULATOR, raw_reply)
 
-    if INAV_VERSION_MAJOR >= 10:
+    if hasattr(InavMSP, "MSP2_INAV_FLIGHT_AXIS_ANGLE_OVERRIDE"):
         def set_flight_axis_angle_override(
             self,
             *,
@@ -1031,7 +1041,7 @@ class MSPApi:
             self.info, rep = self._request(InavMSP.MSP2_INAV_SET_LOCAL_TARGET, payload)
             return rep
 
-        def get_local_target(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        def get_local_target(self) -> Dict[str, Any]:
             self.info, rep = self._request(InavMSP.MSP2_INAV_LOCAL_TARGET)
             return {
                 "pos": {
@@ -1040,9 +1050,9 @@ class MSPApi:
                     "z_cm": rep["posZ"],
                 },
                 "vel": {
-                    "x_cm_s": rep["velX"] / 100.0,
-                    "y_cm_s": rep["velY"] / 100.0,
-                    "z_cm_s": rep["velZ"] / 100.0,
+                    "x_cm_s": rep["velX"],
+                    "y_cm_s": rep["velY"],
+                    "z_cm_s": rep["velZ"],
                 },
                 "yaw_deg": rep["yaw"] / 100.0,
                 "climb_rate_ms": rep["climbRate"] / 100.0,
@@ -1055,29 +1065,36 @@ class MSPApi:
             longitude_deg: float,
             altitude_m: Optional[float],
             altitude_datum: Union[int, "InavEnums.geoAltitudeDatumFlag_e"] = InavEnums.geoAltitudeDatumFlag_e.NAV_WP_TAKEOFF_DATUM,
-            ) -> Mapping[str, Any]:
-                altitude_cm = 0 if altitude_m is None else int(round(altitude_m * 100.0))
-                payload = self._pack_request(
-                    InavMSP.MSP2_INAV_SET_GLOBAL_TARGET,
-                    {
-                        "latitude": int(round(latitude_deg * 1e7)),
-                        "longitude": int(round(longitude_deg * 1e7)),
-                        "altitudeTarget": altitude_cm,
-                        "altitudeDatum": int(altitude_datum),
-                    },
-                )
-                self.info, rep = self._request(InavMSP.MSP2_INAV_SET_GLOBAL_TARGET, payload)
-                return rep
+            loiter_radius_m: Optional[float] = None,
+        ) -> Mapping[str, Any]:
+            altitude_cm = 0 if altitude_m is None else int(round(altitude_m * 100.0))
+            payload_values = {
+                "latitude": int(round(latitude_deg * 1e7)),
+                "longitude": int(round(longitude_deg * 1e7)),
+                "altitudeTarget": altitude_cm,
+                "altitudeDatum": int(altitude_datum),
+            }
+            if loiter_radius_m is not None:
+                payload_values["loiterRadius"] = int(round(loiter_radius_m * 100.0))
+            payload = self._pack_request(
+                InavMSP.MSP2_INAV_SET_GLOBAL_TARGET,
+                payload_values,
+            )
+            self.info, rep = self._request(InavMSP.MSP2_INAV_SET_GLOBAL_TARGET, payload)
+            return rep
 
-        def get_nav_target(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        def get_nav_target(self) -> Dict[str, Any]:
             self.info, rep = self._request(InavMSP.MSP2_INAV_NAV_TARGET)
-            return {
+            result = {
                 "latitude": rep["latTarget"] / 1e7,
                 "longitude": rep["lonTarget"] / 1e7,
                 "altitude_m": rep["altitudeTarget"] / 100.0,
                 "heading_deg": rep["headingTarget"] / 1.0,
                 "climb_rate_ms": rep["climbRate"] / 100.0,
             }
+            if "loiterRadius" in rep:
+                result["loiter_radius_m"] = rep["loiterRadius"] / 100.0
+            return result
     else:
         def set_flight_axis_angle_override(self, *, roll_deg: Optional[float] = None, pitch_deg: Optional[float] = None, yaw_deg: Optional[float] = None) -> Mapping[str, Any]:
             raise RuntimeError("API version mismatch")
@@ -1091,11 +1108,11 @@ class MSPApi:
         def set_local_target(self, *, x_cm: float, y_cm: float, z_cm: float) -> Mapping[str, Any]:
             raise RuntimeError("API version mismatch")
 
-        def get_local_target(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        def get_local_target(self) -> Dict[str, Any]:
             raise RuntimeError("API version mismatch")
 
         def set_global_target(self, *, latitude_deg: float, longitude_deg: float, altitude_m: Optional[float], altitude_datum: Union[int, "InavEnums.geoAltitudeDatumFlag_e"]) -> Mapping[str, Any]:
             raise RuntimeError("API version mismatch")
 
-        def get_nav_target(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        def get_nav_target(self) -> Dict[str, Any]:
             raise RuntimeError("API version mismatch")
