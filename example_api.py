@@ -104,33 +104,6 @@ def main() -> None:
         show_info(api.info)
 
         print()
-        link_stats = api.get_link_stats()
-        print("Link stats:\n" + pp(link_stats))
-        show_info(api.info)
-
-        try:
-            print()
-            dronecan_nodes = api.get_dronecan_nodes()
-            print("DroneCAN nodes:\n" + pp(dronecan_nodes))
-            show_info(api.info)
-            for dronecan_node in dronecan_nodes:
-                node_info = api.get_dronecan_node_info(dronecan_node["nodeID"])
-                print(f"DroneCAN node {dronecan_node['nodeID']} info:\n" + pp(node_info))
-                show_info(api.info)
-        except MSPUnsupportedError as exc:
-            print(f"DroneCAN node queries unavailable in this firmware build: {exc}")
-
-        print()
-        boot_time_ns = api.get_timesync_ns()
-        print(f"FC boot time: {boot_time_ns}ns")
-        show_info(api.info)
-
-        print()
-        disarm_ack = api.set_armed(False)
-        print("ARM_DISARM disarm ack:\n" + pp(disarm_ack))
-        show_info(api.info)
-
-        print()
         logic_condition = api.get_logic_condition(0)
         print("Logic condition[0]:\n" + pp(logic_condition))
         show_info(api.info)
@@ -175,14 +148,6 @@ def main() -> None:
         target_channels = rc_channels[:] if rc_channels else [1500, 1500, 1500, 1500]
         ack = api.set_rc_channels(target_channels)
         print("SET_RAW_RC ack:\n" + pp(ack))
-        show_info(api.info)
-
-        print()
-        aux_rc_ack = api.set_aux_rc(12, [1600, 1400], resolution_bits=16)
-        print("SET_AUX_RC CH13-CH14 ack:\n" + pp(aux_rc_ack))
-        show_info(api.info)
-        aux_rc_channels = api.get_rc_channels()
-        print("RC channels CH13-CH14 after SET_AUX_RC:\n" + pp(aux_rc_channels[12:14]))
         show_info(api.info)
 
         print()
@@ -248,22 +213,6 @@ def main() -> None:
 
         print()
         try:
-            rth_ack = api.activate_rth()
-            print("ACTIVATE_RTH ack:\n" + pp(rth_ack))
-            show_info(api.info)
-        except MSPUnsupportedError as exc:
-            print(f"ACTIVATE_RTH rejected while disarmed: {exc}")
-
-        print()
-        try:
-            landing_ack = api.activate_landing()
-            print("ACTIVATE_LANDING ack:\n" + pp(landing_ack))
-            show_info(api.info)
-        except MSPUnsupportedError as exc:
-            print(f"ACTIVATE_LANDING rejected while disarmed: {exc}")
-
-        print()
-        try:
             ack_heading = api.set_heading(heading_deg=90)
             print("SET_HEAD ack:\n" + pp(ack_heading))
             show_info(api.info)
@@ -276,6 +225,47 @@ def main() -> None:
         show_info(api.info)
 
         if INAV_VERSION_MAJOR >= 10:
+            print()
+            aux_rc_ack = api.set_aux_rc(12, [1600, 1400], resolution_bits=16)
+            print("SET_AUX_RC CH13-CH14 ack:\n" + pp(aux_rc_ack))
+            show_info(api.info)
+            aux_rc_channels = api.get_rc_channels()
+            print("RC channels CH13-CH14 after SET_AUX_RC:\n" + pp(aux_rc_channels[12:14]))
+            show_info(api.info)
+
+            try:
+                print()
+                link_stats = api.get_link_stats()
+                print("Link stats:\n" + pp(link_stats))
+                show_info(api.info)
+            except:
+                print("MSP2_INAV_GET_LINK_STATS unsupported")
+
+            try:
+                print()
+                dronecan_nodes = api.get_dronecan_nodes()
+                print("DroneCAN nodes:\n" + pp(dronecan_nodes))
+                show_info(api.info)
+                for dronecan_node in dronecan_nodes:
+                    node_info = api.get_dronecan_node_info(dronecan_node["nodeID"])
+                    print(f"DroneCAN node {dronecan_node['nodeID']} info:\n" + pp(node_info))
+                    show_info(api.info)
+            except MSPUnsupportedError as exc:
+                print(f"DroneCAN node queries unavailable in this firmware build: {exc}")
+
+            try:
+                print()
+                boot_time_ns = api.get_timesync_ns()
+                print(f"FC boot time: {boot_time_ns}ns")
+                show_info(api.info)
+            except:
+                print("MSP2_INAV_TIMESYNC unsupported")
+
+            print()
+            disarm_ack = api.set_armed(False)
+            print("ARM_DISARM disarm ack:\n" + pp(disarm_ack))
+            show_info(api.info)
+
             print()
             local_target = api.get_local_target()
             print("Local target (NEU offsets, cm):\n" + pp(local_target))
@@ -318,243 +308,21 @@ def main() -> None:
             except Exception as exc:
                 print(f"SET_GLOBAL_TARGET failed (expected if GCSNAV/offboard not active): {exc}")
 
-        """Result:
-        MSP API version:
-            mspProtocolVersion: 0
-            apiVersionMajor: 2
-            apiVersionMinor: 5
-        latency=10.29ms, attempt=1, transport=serial
+            print()
+            try:
+                rth_ack = api.activate_rth()
+                print("ACTIVATE_RTH ack:\n" + pp(rth_ack))
+                show_info(api.info)
+            except MSPUnsupportedError as exc:
+                print(f"ACTIVATE_RTH rejected while disarmed: {exc}")
 
-        Flight controller variant:
-            fcVariantIdentifier: INAV
-        latency=10.14ms, attempt=1, transport=serial
-
-        Board info:
-            boardIdentifier: H743
-            hardwareRevision: 0
-            osdSupport: 2
-            commCapabilities:
-                vcp: True
-                softSerial: True
-            targetName: MATEKH743
-        latency=20.14ms, attempt=1, transport=serial
-
-        Sensor configuration:
-            accHardware: <accelerationSensor_e.ACC_ICM42605: 8>
-            baroHardware: <baroSensor_e.BARO_SPL06: 7>
-            magHardware: <magSensor_e.MAG_QMC5883: 7>
-            pitotHardware: <pitotSensor_e.PITOT_VIRTUAL: 4>
-            rangefinderHardware: <rangefinderType_e.RANGEFINDER_NONE: 0>
-            opflowHardware: <opticalFlowSensor_e.OPFLOW_NONE: 0>
-        latency=19.94ms, attempt=1, transport=serial
-
-        Mode ranges:
-            0:
-                mode: ARM
-                boxIndex: 0
-                permanentId: 0
-                auxChannelIndex: 0
-                pwmRange:
-                    0: 900
-                    1: 900
-        latency=20.36ms, attempt=1, transport=serial
-
-        INAV status:
-            cycleTime: 502
-            i2cErrors: 60
-            sensorStatus:
-                0: <sensors_e.SENSOR_GYRO: 1>
-                1: <sensors_e.SENSOR_ACC: 2>
-                2: <sensors_e.SENSOR_OPFLOW: 64>
-                3: <sensors_e.SENSOR_GPS: 128>
-            cpuLoad: 1
-            profileAndBattProfile: 0
-            armingFlags:
-                0: <armingFlag_e.ARMING_DISABLED_HARDWARE_FAILURE: 32768>
-                1: <armingFlag_e.ARMING_DISABLED_RC_LINK: 262144>
-            activeModes:
-                0: <BoxEnum.BOXFAILSAFE: 27>
-            mixerProfile: 0
-        latency=9.88ms, attempt=1, transport=serial
-
-        Analog readings:
-            batteryFlags:
-                fullOnPlugIn: False
-                useCapacityThreshold: False
-                state: <batteryState_e.BATTERY_NOT_PRESENT: 3>
-                cellCount: 0
-            vbat: 0.0
-            amperage: 0.02
-            powerDraw: 0.0
-            mAhDrawn: 0
-            mWhDrawn: 0
-            remainingCapacity: 0
-            percentageRemaining: 0
-            rssi: 0
-        latency=10.10ms, attempt=1, transport=serial
-
-        RX config:
-            serialRxProvider: <rxSerialReceiverType_e.SERIALRX_CRSF: 6>
-            maxCheck: 1900
-            midRc: 1500
-            minCheck: 1100
-            spektrumSatBind: 0
-            rxMinUsec: 885
-            rxMaxUsec: 2115
-            bfCompatRcInterpolation: 0
-            bfCompatRcInterpolationInt: 0
-            bfCompatAirModeThreshold: 0
-            reserved1: 0
-            reserved2: 0
-            reserved3: 0
-            bfCompatFpvCamAngle: 0
-            receiverType: <rxReceiverType_e.RX_TYPE_SERIAL: 1>
-        latency=10.25ms, attempt=1, transport=serial
-
-        Logic condition[0]:
-            enabled: False
-            activatorId: -1
-            operation: <logicOperation_e.LOGIC_CONDITION_TRUE: 0>
-            operandAType: <logicOperandType_e.LOGIC_CONDITION_OPERAND_TYPE_VALUE: 0>
-            operandAValue: 0
-            operandBType: <logicOperandType_e.LOGIC_CONDITION_OPERAND_TYPE_VALUE: 0>
-            operandBValue: 0
-            flags:
-        latency=9.77ms, attempt=1, transport=serial
-
-        Deprecated/invalid MSP example (MSP_SET_ACC_TRIM): MSP code 239 (MSP_SET_ACC_TRIM)(239) unsupported (! response)
-        Unimplemented MSP example (MSP2_INAV_GLOBAL_FUNCTIONS): MSP code 8228 (MSP2_INAV_GLOBAL_FUNCTIONS)(8228) unsupported (! response)
-
-        RX map:
-            0:
-                name: roll
-                mappedTo: 0
-            1:
-                name: pitch
-                mappedTo: 1
-            2:
-                name: throttle
-                mappedTo: 3
-            3:
-                name: yaw
-                mappedTo: 2
-        latency=10.17ms, attempt=1, transport=serial
-
-        Attitude:
-            roll: 2.2
-            pitch: -0.9
-            yaw: 0.5
-        latency=10.12ms, attempt=1, transport=serial
-
-        Altitude:
-            estimatedAltitude: 0.0
-            variometer: 0.0
-            baroAltitude: -0.25
-        latency=10.13ms, attempt=1, transport=serial
-
-        IMU summary:
-            acc:
-                X: 0.017578125
-                Y: 0.03515625
-                Z: 1.00390625
-            gyro:
-                X: 0
-                Y: 0
-                Z: 0
-            mag:
-                X: 0
-                Y: 0
-                Z: 0
-        latency=10.01ms, attempt=1, transport=serial
-
-        RC channels:
-            0: 1500
-            1: 1500
-            2: 1500
-            3: 885
-            4: 1500
-            5: 1500
-        latency=10.11ms, attempt=1, transport=serial
-
-        SET_RAW_RC ack:
-
-        latency=9.99ms, attempt=1, transport=serial
-
-        Battery config:
-            vbatScale: 1100
-            vbatSource: <batVoltageSource_e.BAT_VOLTAGE_RAW: 0>
-            cellCount: 0
-            vbatCellDetect: 4.25
-            vbatMinCell: 3.3
-            vbatMaxCell: 4.2
-            vbatWarningCell: 3.5
-            currentOffset: 0
-            currentScale: 250
-            capacityValue: 0
-            capacityWarning: 0
-            capacityCritical: 0
-            capacityUnit: <batCapacityUnit_e.BAT_CAPACITY_UNIT_MAH: 0>
-        latency=10.31ms, attempt=1, transport=serial
-
-        GPS statistics:
-            lastMessageDt: 0.0
-            errors: 0.0
-            timeouts: 43.0
-            hdop: 99.99
-            eph: 99.99
-            epv: 99.99
-        latency=9.97ms, attempt=1, transport=serial
-
-        Waypoint info:
-            wpCapabilities: 0
-            maxWaypoints: 120
-            missionValid: False
-            waypointCount: 1
-        latency=10.11ms, attempt=1, transport=serial
-
-        Raw GPS:
-            fixType: <gpsFixType_e.GPS_NO_FIX: 0>
-            numSat: 0
-            latitude: 0.0
-            longitude: 0.0
-            altitude: 0.0
-            speed: 0.0
-            groundCourse: 0.0
-        latency=10.14ms, attempt=1, transport=serial
-
-        SET_WP ack:
-
-        latency=9.81ms, attempt=1, transport=serial
-
-        Waypoint:
-            waypointIndex: 1
-            action: <navWaypointActions_e.NAV_WP_ACTION_WAYPOINT: 1>
-            latitude: 1.234
-            longitude: 2.345
-            altitude: 15.0
-            param1: 0
-            param2: 0
-            param3: 0
-            flag: 0
-        latency=10.06ms, attempt=1, transport=serial
-
-        Navigation status:
-            navMode: <navSystemStatus_Mode_e.MW_GPS_MODE_NONE: 0>
-            navState: <navigationFSMState_t.NAV_STATE_UNDEFINED: 0>
-            activeWaypoint:
-                action: <navWaypointActions_e.NAV_WP_ACTION_WAYPOINT: 1>
-                number: 1
-            navError: <navSystemStatus_Error_e.MW_NAV_ERROR_NONE: 0>
-            targetHeading: 5
-        latency=10.02ms, attempt=1, transport=serial
-
-        SET_HEAD ack:
-
-        latency=10.01ms, attempt=1, transport=serial
-
-        Active modes:
-            0: <BoxEnum.BOXFAILSAFE: 27>
-        latency=10.21ms, attempt=1, transport=serial"""
+            print()
+            try:
+                landing_ack = api.activate_landing()
+                print("ACTIVATE_LANDING ack:\n" + pp(landing_ack))
+                show_info(api.info)
+            except MSPUnsupportedError as exc:
+                print(f"ACTIVATE_LANDING rejected while disarmed: {exc}")
 
         """print()
         _, simulator_reply = api.set_simulator(
